@@ -30,7 +30,7 @@ import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { chromium } from 'playwright'
-import { IdpLoginPage } from '../../repos/pragmatic-platform-admin/src/idp-login-page.js'
+import { IdpLoginPage } from './idp-login-page.js'
 
 /** Parsed command line. */
 type SmokeOptions = { console: string; environment: string; ownerEmailFile: string; passwordFile: string; holdSeconds: number }

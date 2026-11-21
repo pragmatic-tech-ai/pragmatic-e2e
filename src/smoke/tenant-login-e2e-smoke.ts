@@ -50,7 +50,7 @@ import { RolloutRegistrationRegistry } from '../../repos/pragmatic-platform-admi
 import { PlatformDeploymentRegistry } from '../../repos/pragmatic-platform-admin/src/platform-deployment-registry.js'
 import { HiveObservationRegistry } from '../../repos/pragmatic-platform-admin/src/hive-observation-record.js'
 import { PlatformHiveOrchestratorFactory } from '../../repos/pragmatic-platform-admin/src/platform-hive-orchestrator-factory.js'
-import { IdpLoginPage } from '../../repos/pragmatic-platform-admin/src/idp-login-page.js'
+import { IdpLoginPage } from './idp-login-page.js'
 import { KindImageLoader } from './kind-image-loader.js'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 import { DockerImageDigest } from '../../repos/pragmatic-platform-admin/src/image-digest.js'

@@ -1,6 +1,6 @@
 import { chromium } from 'playwright'
 import type { Browser, Page } from 'playwright'
-import { IdpLoginPage } from '../../repos/pragmatic-platform-admin/src/idp-login-page.js'
+import { IdpLoginPage } from '../smoke/idp-login-page.js'
 import type { ApiAnswer } from './operator-api-client.js'
 import { OperatorApiClient } from './operator-api-client.js'
 

@@ -2,6 +2,8 @@
 # typecheck and run the tests. No image: this repository releases nothing. Tests that need Docker, kind, a Postgres
 # (PRAGMATIC_TEST_PG_URL) or a browser skip here; the operator runs those where they exist.
 # A pull request from a fork gets no PACKAGES_TOKEN: its install then fails on the registry.
+# Actions are pinned by commit sha (the ones pragmatic-platform-release uses); the install runs no install script: the
+# packages that have one (esbuild, lmdb, msgpackr-extract, protobufjs) load their prebuilt platform packages without it.
 name: ci
 on:
   push:
@@ -14,14 +16,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Install
-        run: npm ci
+        run: npm ci --ignore-scripts --no-audit --no-fund
         env:
           NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
       - name: Sibling repositories

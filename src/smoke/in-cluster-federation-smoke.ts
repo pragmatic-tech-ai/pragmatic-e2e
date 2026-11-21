@@ -36,7 +36,7 @@ import { ImageSigner, FileKeyStore, ReleaseApp } from '@pragmatic-tech-ai/pragma
 import { DevPlatformImages } from '../../repos/pragmatic-platform-admin/src/platform-images.js'
 import { InClusterIdpDriver } from '../../repos/pragmatic-platform-admin/src/in-cluster-idp-driver.js'
 import { InClusterIdpSeedSource } from '../../repos/pragmatic-platform-admin/src/in-cluster-idp-seed.js'
-import { IdpLoginPage } from '../../repos/pragmatic-platform-admin/src/idp-login-page.js'
+import { IdpLoginPage } from './idp-login-page.js'
 import { KindCli } from '../../repos/pragmatic-platform-admin/src/kind.js'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 import { FileSignatureStore } from '../../repos/pragmatic-platform-admin/src/signature-store.js'
