@@ -53,10 +53,12 @@ The console runs each platform app from its own locally built image in local mod
 `pragmatic-postgres:local`. `dev-up.sh` bakes them first, each from its container repository's own `docker-bake.hcl`
 (two steps: `components`, then the image, `--load`ed under the dev tag), from the checkouts in
 `PRAGMATIC_E2E_REPOS_DIR`, so uncommitted edits are in the image. The bake reads packages with the `.npmrc`
-`PRAGMATIC_E2E_NPMRC` names (default `~/.npmrc`), as a BuildKit secret only. Bake them on their own, or only some:
+`PRAGMATIC_E2E_NPMRC` names (default `~/.npmrc`), as a BuildKit secret only, for `linux/amd64`. The builder reads the
+image names from the pinned pragmatic-platform-admin sources, so run `npm ci` and `npm run siblings` in this repository
+first. Bake them on their own, or only some (any release app's repository can be named):
 
 ```bash
-npx tsx src/dev/dev-images.ts                                          # all six
+npx tsx src/dev/dev-images.ts                                          # the six the dev stack runs
 npx tsx src/dev/dev-images.ts pragmatic-env-server pragmatic-ui-unpack # only these
 ```
 

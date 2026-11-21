@@ -2,13 +2,14 @@
  * GATED real-cluster, real-browser end-to-end smoke for in-cluster UI serving (SP-HIVE UI-serving, Spec 4). OPERATOR-RUN ONLY:
  * NOT a *.test.ts, NOT part of `tsx --test` / `npm test`, never executed by CI.
  *
- * Requires on PATH: `docker`, `kind`, `kubectl`, a running Docker daemon, FRESH `pragmatic-server:dev` and `pragmatic-ui-unpack:dev` images in the local docker
- * image store, network access to pull `registry:2`, the Playwright Chromium browser, host ports 443 and InClusterRegistry.NodePort
+ * Requires on PATH: `docker`, `kind`, `kubectl`, a running Docker daemon, FRESH `pragmatic-server:dev`, `pragmatic-ui-unpack:dev`,
+ * `pragmatic-tenant-idp:dev` and `pragmatic-postgres:local` images in the local docker image store (baked by
+ * `npx tsx src/dev/dev-images.ts`), network access to pull `registry:2`, the Playwright Chromium browser, host ports 443 and InClusterRegistry.NodePort
  * (30500) free, and public DNS for `*.localtest.me` (resolves to 127.0.0.1) for the Node-side IdP admin calls. Run with:
  *
  *   npx tsx src/smoke/in-cluster-ui-serving-smoke.ts
  *
- * Steps: (1) create a kind cluster with :443 + registry node port mappings and load the server and ui-unpack images + registry:2; (2) install
+ * Steps: (1) create a kind cluster with :443 + registry node port mappings and load the server, ui-unpack, IdP and IdP database images + registry:2; (2) install
  * ingress-nginx with --enable-ssl-passthrough; (3) apply the in-cluster registry and wait for it; (4) provision the tenant IdP, then
  * compose the real EnvironmentService with a UiDeployActuator pointed at the registry node port; (5) create a federated environment
  * and deploy the Northwind UI bundle to it; (6) drive a real Chromium to /app/<tenant>/northwind/ and assert the marker shell and the
@@ -25,12 +26,13 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium, type BrowserContext } from 'playwright'
 import { DockerEnv } from '../../repos/pragmatic-platform-admin/src/environments/seed/docker.js'
-import { UserSeeder, AdminProxy, WsAdminConnector, BundleBuilderAdapter, UserSeederAdapter, EffectiveRegistry, EnvironmentPlacement, EnvType, Template, type EnvironmentRecord, EnvironmentRegistry, DockerEnvironmentRuntime, EnvironmentRuntimeResolver, EnvironmentService, EnvironmentWorkloadFactory, EnvServerSeedSource, IdpAdminClient, type IIdpService, InClusterEnvironmentRuntime, InClusterRegistry, K8sManifestBuilder, NetPortProbe, PortAllocator, HiveBackend, InfraMode, type HiveRecord, type TenantRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { UserSeeder, AdminProxy, WsAdminConnector, BundleBuilderAdapter, UserSeederAdapter, EffectiveRegistry, EnvironmentPlacement, EnvType, Template, type EnvironmentRecord, EnvironmentRegistry, DockerEnvironmentRuntime, EnvironmentRuntimeResolver, EnvironmentService, EnvironmentWorkloadFactory, EnvServerSeedSource, IdpAdminClient, IdpDatabaseSecret, type IIdpService, InClusterEnvironmentRuntime, InClusterRegistry, K8sManifestBuilder, NetPortProbe, PortAllocator, HiveBackend, InfraMode, type HiveRecord, type TenantRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { DockerEnvAdapter } from '../../repos/pragmatic-platform-admin/src/docker-env-port.js'
 import { PlatformHiveOrchestratorFactory } from '../../repos/pragmatic-platform-admin/src/platform-hive-orchestrator-factory.js'
 import type { IdpConnection } from '../../repos/pragmatic-platform-admin/src/idp-service.js'
 import { DockerImageDigest } from '../../repos/pragmatic-platform-admin/src/image-digest.js'
-import { ImageSigner, FileKeyStore, OciRegistryClient, UiArtifact, UiArtifactSigner, type IKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { ImageSigner, FileKeyStore, OciRegistryClient, ReleaseApp, UiArtifact, UiArtifactSigner, type IKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { DevPlatformImages } from '../../repos/pragmatic-platform-admin/src/platform-images.js'
 import { InClusterIdpDriver } from '../../repos/pragmatic-platform-admin/src/in-cluster-idp-driver.js'
 import { InClusterIdpSeedSource } from '../../repos/pragmatic-platform-admin/src/in-cluster-idp-seed.js'
 import { KindCli } from '../../repos/pragmatic-platform-admin/src/kind.js'
@@ -69,7 +71,8 @@ export class InClusterUiServingSmoke
     private static readonly TenantId = 'uissmoke'
     private static readonly HiveId = 'uis-hive'
     private static readonly BaseDomain = 'localtest.me'
-    private static readonly Image = 'pragmatic-server:dev'
+    private static readonly Image = DevPlatformImages.Of(ReleaseApp.EnvServer)
+    private static readonly IdpImage = DevPlatformImages.Of(ReleaseApp.TenantIdp)
     private static readonly SigningKeyRef = 'dev-signing'
     private static readonly EnvName = 'uis-env'
     private static readonly TamperEnvName = 'uis-env-tamper'
@@ -229,6 +232,9 @@ export class InClusterUiServingSmoke
             await this.kind.CreateCluster(S.ClusterName, { extraPortMappings: [S.HttpsPort, InClusterRegistry.NodePort] })
             await this.kind.LoadImage(S.Image, S.ClusterName)
             await this.kind.LoadImage(EnvironmentWorkloadFactory.UiUnpackImage, S.ClusterName)
+            // The tenant IdP runs its own image, with its database sidecar on the development pragmatic-postgres image.
+            await this.kind.LoadImage(S.IdpImage, S.ClusterName)
+            await this.kind.LoadImage(IdpDatabaseSecret.DevImage, S.ClusterName)
             await this.kind.LoadImage(InClusterRegistry.Image, S.ClusterName)
             this.Expect(S.Labels.Cluster, true)
 
@@ -240,7 +246,7 @@ export class InClusterUiServingSmoke
             this.Expect(S.Labels.Registry, true)
 
             const seeds = new InClusterIdpSeedSource(undefined, S.BaseDomain)
-            const idpDriver = new InClusterIdpDriver(this.kubectl, new K8sManifestBuilder(), seeds, S.HiveId, S.Image)
+            const idpDriver = new InClusterIdpDriver(this.kubectl, new K8sManifestBuilder(), seeds, S.HiveId, S.IdpImage)
             const result = await idpDriver.EnsureRunning({ tenantId: S.TenantId, displayName: S.TenantId, takenPorts: [] })
             const connection = result.connection
             this.Expect(S.Labels.Idp, connection.baseDomain === S.BaseDomain && connection.browserBaseUrl.includes(S.BaseDomain), connection.browserBaseUrl)

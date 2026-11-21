@@ -314,6 +314,16 @@ describe('LiveLoopStack.KindImages', () =>
     })
 })
 
+describe('LiveLoopStack.ImagesToBake', () =>
+{
+    it('bakes the live loop\'s dev images, and none with PRAGMATIC_DEV_SKIP_IMAGE_BAKE=1', () =>
+    {
+        assert.deepEqual(LiveLoopStack.ImagesToBake({}), DevImages.LiveLoopApps)
+        assert.deepEqual(LiveLoopStack.ImagesToBake({ PRAGMATIC_DEV_SKIP_IMAGE_BAKE: '0' }), DevImages.LiveLoopApps)
+        assert.deepEqual(LiveLoopStack.ImagesToBake({ PRAGMATIC_DEV_SKIP_IMAGE_BAKE: '1' }), [])
+    })
+})
+
 describe('LiveLoopStack.StopPlan', () =>
 {
     it('stops the edge first, then the console, each by its pid file, health URL and port', () =>

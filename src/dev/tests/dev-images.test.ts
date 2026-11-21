@@ -3,11 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, it } from 'node:test'
-import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { ReleaseApp, ReleaseApps } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { EnvironmentWorkloadFactory } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { DevPlatformImages } from '../../../repos/pragmatic-platform-admin/src/platform-images.js'
+import { DockerEnv } from '../../../repos/pragmatic-platform-admin/src/environments/seed/docker.js'
 import { RepositoryMissingError, RepositoryRoots } from '../../stack/repository-roots.js'
-import { type DevImageCommand, DevImageNpmrcMissingError, DevImages, DevImageUnknownError, type IDevImageRunner } from '../dev-images.js'
+import { type DevImageCommand, DevImageNpmrcMissingError, DevImages, DevImageUnknownError, type IDevImageRunner, type IFileProbe, type ILogSink } from '../dev-images.js'
 
 class RecordingRunner implements IDevImageRunner
 {
@@ -24,10 +25,33 @@ class RecordingRunner implements IDevImageRunner
     }
 }
 
+class FixedFileProbe implements IFileProbe
+{
+    public constructor(private readonly present: boolean)
+    {
+    }
+
+    public Exists(_path: string): boolean
+    {
+        return this.present
+    }
+}
+
+class SilentLog implements ILogSink
+{
+    public readonly Lines: string[] = []
+
+    public Line(text: string): void
+    {
+        this.Lines.push(text)
+    }
+}
+
 class DevImagesFx
 {
     public static readonly Prefix = 'e2e-dev-images-'
     public static readonly Npmrc = '/home/dev/.npmrc'
+    public static readonly Env = { NPMRC_FILE: '/home/dev/.npmrc', PLATFORMS: 'linux/amd64' }
 
     /** A repositories folder holding a checkout folder for each of `repos`. */
     public static With(repos: readonly string[], body: (dir: string) => Promise<void>): Promise<void>
@@ -42,41 +66,51 @@ class DevImagesFx
 
     public static Builder(dir: string, runner: IDevImageRunner, npmrcExists: boolean = true): DevImages
     {
-        return new DevImages(new RepositoryRoots(dir), DevImagesFx.Npmrc, runner, () => npmrcExists, () => undefined)
+        return new DevImages(new RepositoryRoots(dir), DevImagesFx.Npmrc, runner, new FixedFileProbe(npmrcExists), new SilentLog())
+    }
+
+    /** The exact bake steps for `app` at `root` with the fixture .npmrc, as each container repository's docker-bake.hcl header gives them. */
+    public static Expected(app: ReleaseApp, tag: string, root: string): DevImageCommand[]
+    {
+        return [
+            { file: 'docker', args: ['buildx', 'bake', '-f', 'docker-bake.hcl', '--allow=fs.read=/home/dev/.npmrc', 'components'], cwd: root, env: DevImagesFx.Env },
+            {
+                file: 'docker',
+                args: ['buildx', 'bake', '-f', 'docker-bake.hcl', '-f', '.components/docker-bake.components.json', '--allow=fs.read=/home/dev/.npmrc',
+                    '--set', app + '.tags=' + tag, '--load', app],
+                cwd: root,
+                env: DevImagesFx.Env,
+            },
+        ]
     }
 }
 
 describe('DevImages.BakeCommands', () =>
 {
-    it('bakes the components step, then the image target with the components override, loaded under the dev tag', () =>
+    it('bakes the components step, then the image target with the components override, loaded under the dev tag, for amd64', () =>
     {
         const root = '/repos/pragmatic-env-server'
-        const commands = DevImages.BakeCommands(ReleaseApp.EnvServer, root, DevImagesFx.Npmrc)
-        assert.deepEqual(commands, [
-            {
-                file: 'docker',
-                args: ['buildx', 'bake', '-f', 'docker-bake.hcl', '--allow=fs.read=/home/dev/.npmrc', 'components'],
-                cwd: root,
-                env: { NPMRC_FILE: '/home/dev/.npmrc' },
-            },
-            {
-                file: 'docker',
-                args: ['buildx', 'bake', '-f', 'docker-bake.hcl', '-f', '.components/docker-bake.components.json', '--allow=fs.read=/home/dev/.npmrc',
-                    '--set', 'pragmatic-env-server.tags=pragmatic-server:dev', '--load', 'pragmatic-env-server'],
-                cwd: root,
-                env: { NPMRC_FILE: '/home/dev/.npmrc' },
-            },
-        ])
+        assert.deepEqual(DevImages.BakeCommands(ReleaseApp.EnvServer, root, DevImagesFx.Npmrc), DevImagesFx.Expected(ReleaseApp.EnvServer, 'pragmatic-server:dev', root))
     })
 
-    it('names the image target after the app and tags it as the console runs it in local mode, for every image it bakes', () =>
+    it('gives every release app the exact steps, its image target named after it and tagged as the console runs it in local mode', () =>
     {
-        for (const app of DevImages.DevStackApps)
+        const tags = new Map<ReleaseApp, string>([
+            [ReleaseApp.PlatformAdmin, 'pragmatic-platform-admin:dev'],
+            [ReleaseApp.PlatformEdge, 'pragmatic-platform-edge:dev'],
+            [ReleaseApp.EnvServer, 'pragmatic-server:dev'],
+            [ReleaseApp.EnvGateway, 'pragmatic-env-gateway:dev'],
+            [ReleaseApp.HiveAgent, 'pragmatic-hive-agent:dev'],
+            [ReleaseApp.TenantAdmin, 'pragmatic-tenant-admin:dev'],
+            [ReleaseApp.TenantIdp, 'pragmatic-tenant-idp:dev'],
+            [ReleaseApp.UiUnpack, 'pragmatic-ui-unpack:dev'],
+            [ReleaseApp.Postgres, 'pragmatic-postgres:local'],
+        ])
+        for (const app of ReleaseApps.All)
         {
-            const image = DevImages.BakeCommands(app, '/r/' + app, DevImagesFx.Npmrc)[1]!
-            assert.equal(image.args.at(-1), app, app)
-            assert.ok(image.args.includes(app + '.tags=' + DevPlatformImages.Of(app)), app)
-            assert.ok(!image.args.some(a => a.includes('ghcr.io')), app)
+            const root = '/r/' + app
+            assert.deepEqual(DevImages.BakeCommands(app, root, DevImagesFx.Npmrc), DevImagesFx.Expected(app, tags.get(app)!, root), app)
+            assert.equal(tags.get(app), DevPlatformImages.Of(app), app)
         }
     })
 })
@@ -106,6 +140,12 @@ describe('DevImages tags', () =>
     {
         assert.equal(DevImages.BuildCommandOf(ReleaseApp.TenantIdp), 'npx tsx src/dev/dev-images.ts pragmatic-tenant-idp')
     })
+
+    it('the platform admin console\'s missing env server image hint names this builder\'s command', () =>
+    {
+        assert.equal(DockerEnv.BuildCommandText, DevImages.BuildCommandOf(ReleaseApp.EnvServer))
+        assert.equal(DockerEnv.ImageName, DevImages.TagOf(ReleaseApp.EnvServer))
+    })
 })
 
 describe('DevImages.ParseApps', () =>
@@ -115,17 +155,18 @@ describe('DevImages.ParseApps', () =>
         assert.deepEqual(DevImages.ParseApps([]), DevImages.DevStackApps)
     })
 
-    it('keeps the named apps in order', () =>
+    it('keeps the named apps in order, and accepts any release app', () =>
     {
         assert.deepEqual(DevImages.ParseApps(['pragmatic-tenant-idp', 'pragmatic-env-server']), [ReleaseApp.TenantIdp, ReleaseApp.EnvServer])
+        assert.deepEqual(DevImages.ParseApps([...ReleaseApps.All]), ReleaseApps.All)
     })
 
-    it('refuses an app it does not bake, listing the ones it does', () =>
+    it('refuses a name that is not a release app, listing the ones it bakes', () =>
     {
-        for (const name of ['pragmatic-platform-admin', 'pragmatic-server', ''])
+        for (const name of ['pragmatic-server', 'postgres', ''])
         {
             assert.throws(() => DevImages.ParseApps([name]), (e: Error) =>
-                e instanceof DevImageUnknownError && e.message.includes(JSON.stringify(name)) && e.message.includes('pragmatic-ui-unpack'))
+                e instanceof DevImageUnknownError && e.message.includes(JSON.stringify(name)) && e.message.includes('pragmatic-ui-unpack') && e.message.includes('pragmatic-platform-admin'))
         }
     })
 })
@@ -139,10 +180,17 @@ describe('DevImages.Build', () =>
             const runner = new RecordingRunner()
             await DevImagesFx.Builder(dir, runner).Build([ReleaseApp.EnvServer, ReleaseApp.UiUnpack])
             assert.deepEqual(runner.Commands, [
-                ...DevImages.BakeCommands(ReleaseApp.EnvServer, join(dir, ReleaseApp.EnvServer), DevImagesFx.Npmrc),
-                ...DevImages.BakeCommands(ReleaseApp.UiUnpack, join(dir, ReleaseApp.UiUnpack), DevImagesFx.Npmrc),
+                ...DevImagesFx.Expected(ReleaseApp.EnvServer, 'pragmatic-server:dev', join(dir, ReleaseApp.EnvServer)),
+                ...DevImagesFx.Expected(ReleaseApp.UiUnpack, 'pragmatic-ui-unpack:dev', join(dir, ReleaseApp.UiUnpack)),
             ])
         })
+    })
+
+    it('bakes nothing and checks nothing for no app (a skipped bake)', async () =>
+    {
+        const runner = new RecordingRunner()
+        await DevImagesFx.Builder(join(tmpdir(), 'no-such-repos'), runner, false).Build([])
+        assert.deepEqual(runner.Commands, [])
     })
 
     it('refuses a missing checkout by name before baking anything', async () =>
@@ -194,6 +242,18 @@ describe('DevImages.FromEnvironment', () =>
             const builder = DevImages.FromEnvironment(env)
             assert.equal(builder.NpmrcFile, npmrc)
             assert.equal(builder.Roots.Directory, dir)
+        }
+    })
+})
+
+describe('DevImages.SkipsBake', () =>
+{
+    it('skips only for PRAGMATIC_DEV_SKIP_IMAGE_BAKE=1 exactly, as dev-up.sh reads it', () =>
+    {
+        assert.equal(DevImages.SkipsBake({ PRAGMATIC_DEV_SKIP_IMAGE_BAKE: '1' }), true)
+        for (const env of [{}, { PRAGMATIC_DEV_SKIP_IMAGE_BAKE: '' }, { PRAGMATIC_DEV_SKIP_IMAGE_BAKE: '0' }, { PRAGMATIC_DEV_SKIP_IMAGE_BAKE: 'true' }, { PRAGMATIC_DEV_SKIP_IMAGE_BAKE: ' 1 ' }])
+        {
+            assert.equal(DevImages.SkipsBake(env), false, JSON.stringify(env))
         }
     })
 })

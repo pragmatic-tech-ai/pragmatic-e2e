@@ -1,9 +1,9 @@
 /**
  * GATED real-login browser e2e smoke (SP-HIVE-7 deferral #11). NOT a *.test.ts and NOT in any test glob.
  *
- * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster), a FRESH `pragmatic-server:dev`
- * image in the local image store (the per-tenant IdP container and the hive workload both run from it), and the
- * Playwright Chromium browser. Run with:
+ * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster), FRESH `pragmatic-tenant-idp:dev` (the
+ * per-tenant IdP container) and `pragmatic-server:dev` (the hive workload) images in the local image store (baked by
+ * `npx tsx src/dev/dev-images.ts pragmatic-tenant-idp pragmatic-env-server`), and the Playwright Chromium browser. Run with:
  *
  *   npx tsx src/smoke/tenant-login-e2e-smoke.ts
  *
@@ -32,6 +32,7 @@ import { fileURLToPath } from 'node:url'
 import { RepositoryRoots } from '../stack/repository-roots.js'
 import { chromium } from 'playwright'
 import { DockerEnv } from '../../repos/pragmatic-platform-admin/src/environments/seed/docker.js'
+import { DevPlatformImages } from '../../repos/pragmatic-platform-admin/src/platform-images.js'
 import { UserSeeder, BundleBuilderAdapter, UserSeederAdapter, DockerEnvironmentRuntime, EnvironmentRuntimeResolver, InClusterEnvironmentRuntime, EnvironmentRegistry, EnvironmentService, EnvStatus, EnvType, Template, type EnvironmentRecord, TemplateCatalog, BundleBuilder, EnvServerSeedSource, type EnvironmentWorkload, HiveBackend, InfraMode, type HiveRecord, AdminProxy, WsAdminConnector, IdpAdminClient, NetPortProbe, PortAllocator, ManifestRegistry, EnvironmentPlacement, type HiveOrchestratorFactory, type IHiveOrchestrator, K8sManifestBuilder, TenantAdminClientRegistry, TenantHostResolver, TenantConsoleHost, TenantPlaneComposer, TenantSessions } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { DockerEnvAdapter } from '../../repos/pragmatic-platform-admin/src/docker-env-port.js'
 import { ClientRegistry } from '../../repos/pragmatic-platform-admin/src/client-registry.js'
@@ -53,7 +54,7 @@ import { IdpLoginPage } from '../../repos/pragmatic-platform-admin/src/idp-login
 import { KindImageLoader } from './kind-image-loader.js'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 import { DockerImageDigest } from '../../repos/pragmatic-platform-admin/src/image-digest.js'
-import { ImageSigner, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { ImageSigner, FileKeyStore, ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { FileSignatureStore } from '../../repos/pragmatic-platform-admin/src/signature-store.js'
 import { InMemoryOidcFlowStateStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { MapSecretStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc/testing'
@@ -488,7 +489,7 @@ export class TenantLoginE2eSmoke
         await directory.Load()
         this.idpContainers = new IdpContainerEnv(new ExecFileDockerExec())
         this.idpRegistry = new IdpRegistry(join(this.dataRoot, S.IdpsFile))
-        const idpService = new IdpService(this.idpRegistry, new DockerIdpDriver(new PortAllocator(S.IdpPortFloor, new NetPortProbe()), this.idpContainers, this.dataRoot, DockerEnv.ImageName))
+        const idpService = new IdpService(this.idpRegistry, new DockerIdpDriver(new PortAllocator(S.IdpPortFloor, new NetPortProbe()), this.idpContainers, this.dataRoot, DevPlatformImages.Of(ReleaseApp.TenantIdp)))
         const orchestrators = new PlatformHiveOrchestratorFactory(S.K8sContext, join(this.dataRoot, S.OrchestratorDir))
         const placement = new EnvironmentPlacement(directory)
         const service = new EnvironmentService(

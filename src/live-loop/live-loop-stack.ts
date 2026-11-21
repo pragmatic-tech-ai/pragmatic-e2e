@@ -495,10 +495,18 @@ export class LiveLoopStack
     private readonly services: LiveLoopServices
     private readonly images: DevImages
 
-    public constructor(roots: RepositoryRoots = RepositoryRoots.FromEnvironment(process.env))
+    public constructor(
+        roots: RepositoryRoots = RepositoryRoots.FromEnvironment(process.env),
+        images: DevImages = new DevImages(roots, DevImages.NpmrcOf(process.env)))
     {
         this.services = new LiveLoopServices(roots)
-        this.images = new DevImages(roots, DevImages.NpmrcOf(process.env))
+        this.images = images
+    }
+
+    /** The dev images up bakes: the live loop's, or none when `env` skips the bake (PRAGMATIC_DEV_SKIP_IMAGE_BAKE=1, the images are fresh). */
+    public static ImagesToBake(env: NodeJS.ProcessEnv): readonly ReleaseApp[]
+    {
+        return DevImages.SkipsBake(env) ? [] : DevImages.LiveLoopApps
     }
 
     /** What up loads onto the kind node: the dev images the hive's pods run (the tenant IdP runs in local docker), the in-cluster registry and environment Postgres. */
@@ -571,7 +579,7 @@ export class LiveLoopStack
         mkdirSync(dataRoot, { recursive: true })
 
         console.log(L.Steps.Images)
-        await this.images.Build(DevImages.LiveLoopApps)
+        await this.images.Build(LiveLoopStack.ImagesToBake(process.env))
 
         console.log(L.Steps.Cluster)
         if (!(await this.kind.ListClusters()).includes(N.ClusterName))

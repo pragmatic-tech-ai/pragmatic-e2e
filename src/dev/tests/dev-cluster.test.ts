@@ -112,22 +112,20 @@ describe('DevCluster.Up (each dev image)', () =>
 {
     it('refuses every missing dev image by the repository that bakes it, and never pulls one', async () =>
     {
-        const repositories = ['pragmatic-env-server', 'pragmatic-ui-unpack', 'pragmatic-hive-agent', 'pragmatic-tenant-admin', 'pragmatic-tenant-idp', 'pragmatic-postgres']
-        for (const [i, image] of DevClusterFx.DevImages.entries())
+        for (const app of DevImages.DevStackApps)
         {
+            const image = DevPlatformImages.Of(app)
             const docker = new FakeDocker(DevClusterFx.Without(image))
             await assert.rejects(DevClusterFx.Silent(new FakeKind(), docker).Up(), (e: Error) =>
-                e.message.startsWith(image + ' is not in the local docker store') && e.message.includes('dev-images.ts ' + repositories[i]))
+                e.message.startsWith(image + ' is not in the local docker store') && e.message.includes('dev-images.ts ' + app))
             assert.ok(!docker.Calls.includes('docker pull ' + image))
         }
     })
 
-    it('loads the dev images the console runs in local mode', () =>
+    it('loads the dev images the console runs in local mode, in the order the builder bakes them, then the registry and environment Postgres', () =>
     {
-        for (const app of DevImages.DevStackApps)
-        {
-            assert.ok(DevCluster.Images.includes(DevPlatformImages.Of(app)), app)
-        }
+        assert.deepEqual(DevCluster.Images, [...DevImages.DevStackApps.map(app => DevPlatformImages.Of(app)), 'registry:2', 'postgres:16'])
+        assert.deepEqual(DevClusterFx.AllImages, DevCluster.Images)
     })
 })
 

@@ -6,7 +6,7 @@
  * kind; the console signs them as it always did.
  *
  *   npx tsx src/dev/dev-images.ts                      # every image the dev stack runs
- *   npx tsx src/dev/dev-images.ts pragmatic-env-server # only the named ones
+ *   npx tsx src/dev/dev-images.ts pragmatic-env-server # only the named ones (any release app)
  *
  * Each repository is the full checkout under PRAGMATIC_E2E_REPOS_DIR (default: the folder this repository sits in), so
  * the image holds what the checkout holds, uncommitted edits included. Two bake steps per repository, as its
@@ -20,7 +20,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { ReleaseApp, ReleaseApps } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { DevPlatformImages } from '../../repos/pragmatic-platform-admin/src/platform-images.js'
 import { RepositoryRoots } from '../stack/repository-roots.js'
 
@@ -87,7 +87,38 @@ export class DevImageNpmrcMissingError extends Error
     }
 }
 
-/** Spawns the command with inherited output; a bake that runs past the deadline is killed and reported. */
+/** Whether a file exists (the .npmrc the bake reads). */
+export interface IFileProbe
+{
+    Exists(path: string): boolean
+}
+
+export class FsFileProbe implements IFileProbe
+{
+    public Exists(path: string): boolean
+    {
+        return existsSync(path)
+    }
+}
+
+/** Where the builder's progress lines go. */
+export interface ILogSink
+{
+    Line(text: string): void
+}
+
+export class ConsoleLogSink implements ILogSink
+{
+    public Line(text: string): void
+    {
+        console.log(text)
+    }
+}
+
+/**
+ * Spawns the command with inherited output; a bake that runs past the deadline is killed and reported. Killing the
+ * `docker buildx bake` client cancels its build session, so BuildKit stops the build; what it finished stays cached.
+ */
 export class SpawnDevImageRunner implements IDevImageRunner
 {
     /** A cold bake installs every package and compiles; a warm one takes seconds. */
@@ -136,7 +167,13 @@ export class SpawnDevImageRunner implements IDevImageRunner
 export class DevImages
 {
     public static readonly NpmrcEnvVar = 'PRAGMATIC_E2E_NPMRC'
-    public static readonly DefaultNpmrc = join(homedir(), '.npmrc')
+    private static readonly NpmrcFileName = '.npmrc'
+    public static readonly DefaultNpmrc = join(homedir(), DevImages.NpmrcFileName)
+    /** Set to 1, the dev stack and the live loop skip the bake (the images are fresh already). */
+    public static readonly SkipBakeEnvVar = 'PRAGMATIC_DEV_SKIP_IMAGE_BAKE'
+    private static readonly SkipBakeValue = '1'
+    /** Dev images are baked for the dev machine's docker (amd64, as the bakes default to and as kind runs here). */
+    public static readonly Platform = 'linux/amd64'
     /** Every image the dev stack runs from a container repository, in build order: environments (the server and the UI unpack init container), the hive agent, the tenant console with its IdP and Postgres. */
     public static readonly DevStackApps: readonly ReleaseApp[] = [
         ReleaseApp.EnvServer,
@@ -167,6 +204,7 @@ export class DevImages
     private static readonly TagsKey = '.tags='
     private static readonly LoadFlag = '--load'
     private static readonly NpmrcVar = 'NPMRC_FILE'
+    private static readonly PlatformsVar = 'PLATFORMS'
     private static readonly BakingPrefix = '[dev-images] baking '
     private static readonly FromWord = ' from '
     private static readonly BuiltPrefix = '[dev-images] built '
@@ -175,8 +213,8 @@ export class DevImages
         public readonly Roots: RepositoryRoots,
         public readonly NpmrcFile: string,
         private readonly runner: IDevImageRunner = new SpawnDevImageRunner(),
-        private readonly exists: (path: string) => boolean = existsSync,
-        private readonly log: (line: string) => void = line => console.log(line))
+        private readonly files: IFileProbe = new FsFileProbe(),
+        private readonly log: ILogSink = new ConsoleLogSink())
     {
     }
 
@@ -191,6 +229,12 @@ export class DevImages
     {
         const raw = env[DevImages.NpmrcEnvVar]?.trim() ?? ''
         return raw === '' ? DevImages.DefaultNpmrc : resolve(raw)
+    }
+
+    /** True when `env` asks to skip the bake (SkipBakeEnvVar is 1). */
+    public static SkipsBake(env: NodeJS.ProcessEnv): boolean
+    {
+        return env[DevImages.SkipBakeEnvVar] === DevImages.SkipBakeValue
     }
 
     /** The local docker tag of `app`'s dev image: the name the platform admin console runs in local mode. */
@@ -213,7 +257,7 @@ export class DevImages
     public static BakeCommands(app: ReleaseApp, root: string, npmrcFile: string): readonly DevImageCommand[]
     {
         const D = DevImages
-        const env = { [D.NpmrcVar]: npmrcFile }
+        const env = { [D.NpmrcVar]: npmrcFile, [D.PlatformsVar]: D.Platform }
         const allow = D.AllowRead + npmrcFile
         return [
             { file: D.Docker, args: [D.Buildx, D.Bake, D.FileFlag, D.BakeFile, allow, D.ComponentsTarget], cwd: root, env },
@@ -226,7 +270,7 @@ export class DevImages
         ]
     }
 
-    /** The apps the command line names, in that order; none names every image of the dev stack. Refuses anything else, listing what it bakes. */
+    /** The apps the command line names, in that order (any release app); none names every image of the dev stack. Refuses anything else, listing what it bakes. */
     public static ParseApps(names: readonly string[]): readonly ReleaseApp[]
     {
         const D = DevImages
@@ -234,7 +278,7 @@ export class DevImages
         {
             return D.DevStackApps
         }
-        const known: readonly string[] = D.DevStackApps
+        const known: readonly string[] = ReleaseApps.All
         return names.map(name =>
         {
             if (!known.includes(name))
@@ -245,23 +289,27 @@ export class DevImages
         })
     }
 
-    /** Bakes each app's dev image in order. Every checkout and the .npmrc are checked before the first bake, so a missing one fails fast, by name. */
+    /** Bakes each app's dev image in order (nothing for none). Every checkout and the .npmrc are checked before the first bake, so a missing one fails fast, by name. */
     public async Build(apps: readonly ReleaseApp[]): Promise<void>
     {
         const D = DevImages
-        if (!this.exists(this.NpmrcFile))
+        if (apps.length === 0)
+        {
+            return
+        }
+        if (!this.files.Exists(this.NpmrcFile))
         {
             throw new DevImageNpmrcMissingError(this.NpmrcFile)
         }
         const plan = apps.map(app => ({ app, root: this.Roots.Of(app) }))
         for (const { app, root } of plan)
         {
-            this.log(D.BakingPrefix + D.TagOf(app) + D.FromWord + root)
+            this.log.Line(D.BakingPrefix + D.TagOf(app) + D.FromWord + root)
             for (const command of D.BakeCommands(app, root, this.NpmrcFile))
             {
                 await this.runner.Run(command)
             }
-            this.log(D.BuiltPrefix + D.TagOf(app))
+            this.log.Line(D.BuiltPrefix + D.TagOf(app))
         }
     }
 

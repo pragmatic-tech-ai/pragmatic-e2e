@@ -3,9 +3,9 @@
  *
  * Requires a local Kubernetes context (default `kind-pragmatic-dev`; override with PRAGMATIC_SMOKE_CONTEXT) and a
  * pragmatic-tenant-admin image (default `pragmatic-tenant-admin:dev`, override with PRAGMATIC_SMOKE_IMAGE): the tenant
- * plane sets no container command, so the image's own entry point must start the tenant admin console. Build it in the
- * pragmatic-tenant-admin repository (`docker buildx bake`, tagged as above) and on a kind cluster
- * `kind load docker-image pragmatic-tenant-admin:dev`).
+ * plane sets no container command, so the image's own entry point must start the tenant admin console. Bake it from the
+ * pragmatic-tenant-admin checkout with `npx tsx src/dev/dev-images.ts pragmatic-tenant-admin` (tagged as above) and, on
+ * a kind cluster, load it (`src/dev/dev-cluster.ts up`, or `kind load docker-image pragmatic-tenant-admin:dev`).
  * Run with:
  *
  *   npx tsx src/smoke/tenant-admin-smoke.ts
@@ -52,6 +52,7 @@ import { SqlSessionRepository } from '@pragmatic-tech-ai/pragmatic-app-host'
 import { PgSession } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import pg from 'pg'
 import { DevPlatformImages } from '../../repos/pragmatic-platform-admin/src/platform-images.js'
+import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 /** The smoke never reconciles against docker, so no container is ever reported running. */
 class NoContainerProbe implements IContainerProbe
@@ -74,7 +75,7 @@ export class TenantAdminSmoke
 {
     private static readonly ImageEnv = 'PRAGMATIC_SMOKE_IMAGE'
     private static readonly ChannelHostEnv = 'PRAGMATIC_SMOKE_CHANNEL_HOST'
-    private static readonly DefaultImage = 'pragmatic-tenant-admin:dev'
+    private static readonly DefaultImage = DevPlatformImages.Of(ReleaseApp.TenantAdmin)
     private static readonly DefaultChannelHost = 'host.docker.internal'
     private static readonly ClientId = 'ta-client'
     private static readonly TenantId = 'ta-tenant'

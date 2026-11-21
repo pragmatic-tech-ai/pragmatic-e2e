@@ -2,8 +2,9 @@
  * GATED real-cluster, real-browser smoke for in-cluster split-host IdP federation (SP-HIVE-6c). OPERATOR-RUN ONLY: NOT a
  * *.test.ts, NOT part of `tsx --test` / `npm test`, never executed by CI. Supersedes the retired Docker-era idp-federation-smoke.
  *
- * Requires on PATH: `kind`, `kubectl`, a running Docker daemon, FRESH `pragmatic-server:dev` and `pragmatic-postgres:local`
- * images in the local docker image store (both loaded onto the kind node), the Playwright Chromium browser, host port 443
+ * Requires on PATH: `kind`, `kubectl`, a running Docker daemon, FRESH `pragmatic-server:dev` (environments),
+ * `pragmatic-tenant-admin:dev`, `pragmatic-tenant-idp:dev` and `pragmatic-postgres:local` images in the local docker image
+ * store (baked by `npx tsx src/dev/dev-images.ts`; all loaded onto the kind node), the Playwright Chromium browser, host port 443
  * free, and public DNS for `*.localtest.me`
  * (resolves to 127.0.0.1) for the Node-side IdP admin calls. Run with:
  *
@@ -31,7 +32,8 @@ import { DockerEnvAdapter } from '../../repos/pragmatic-platform-admin/src/docke
 import { PlatformHiveOrchestratorFactory } from '../../repos/pragmatic-platform-admin/src/platform-hive-orchestrator-factory.js'
 import type { IdpConnection } from '../../repos/pragmatic-platform-admin/src/idp-service.js'
 import { DockerImageDigest } from '../../repos/pragmatic-platform-admin/src/image-digest.js'
-import { ImageSigner, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { ImageSigner, FileKeyStore, ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { DevPlatformImages } from '../../repos/pragmatic-platform-admin/src/platform-images.js'
 import { InClusterIdpDriver } from '../../repos/pragmatic-platform-admin/src/in-cluster-idp-driver.js'
 import { InClusterIdpSeedSource } from '../../repos/pragmatic-platform-admin/src/in-cluster-idp-seed.js'
 import { IdpLoginPage } from '../../repos/pragmatic-platform-admin/src/idp-login-page.js'
@@ -82,7 +84,10 @@ export class InClusterFederationSmoke
     private static readonly TenantId = 'icfsmoke'
     private static readonly HiveId = 'icf-hive'
     private static readonly BaseDomain = 'localtest.me'
-    private static readonly Image = 'pragmatic-server:dev'
+    /** The environments' image (the one the hive verifies, so the smoke signs it). */
+    private static readonly ServerImage = DevPlatformImages.Of(ReleaseApp.EnvServer)
+    private static readonly TenantAdminImage = DevPlatformImages.Of(ReleaseApp.TenantAdmin)
+    private static readonly IdpImage = DevPlatformImages.Of(ReleaseApp.TenantIdp)
     private static readonly SigningKeyRef = 'dev-signing'
     private static readonly EnvAName = 'icf-env-a'
     private static readonly EnvBName = 'icf-env-b'
@@ -225,7 +230,10 @@ export class InClusterFederationSmoke
         {
             this.tempDir = await mkdtemp(join(tmpdir(), S.TempPrefix))
             await this.kind.CreateCluster(S.ClusterName, { extraPortMappings: [S.HttpsPort] })
-            await this.kind.LoadImage(S.Image, S.ClusterName)
+            for (const image of [S.ServerImage, S.TenantAdminImage, S.IdpImage])
+            {
+                await this.kind.LoadImage(image, S.ClusterName)
+            }
             // The IdP's and the console's database sidecars run the development pragmatic-postgres image.
             await this.kind.LoadImage(IdpDatabaseSecret.DevImage, S.ClusterName)
             this.Expect(S.Labels.Cluster, true)
@@ -234,7 +242,7 @@ export class InClusterFederationSmoke
             this.Expect(S.Labels.Ingress, true)
 
             const seeds = new InClusterIdpSeedSource(undefined, S.BaseDomain)
-            const idpDriver = new InClusterIdpDriver(this.kubectl, new K8sManifestBuilder(), seeds, S.HiveId, S.Image)
+            const idpDriver = new InClusterIdpDriver(this.kubectl, new K8sManifestBuilder(), seeds, S.HiveId, S.IdpImage)
             const result = await idpDriver.EnsureRunning({ tenantId: S.TenantId, displayName: S.TenantId, takenPorts: [] })
             const connection = result.connection
             this.Expect(S.Labels.Idp, connection.baseDomain === S.BaseDomain && connection.browserBaseUrl.includes(S.BaseDomain), connection.browserBaseUrl)
@@ -310,14 +318,14 @@ export class InClusterFederationSmoke
         const bootstrap = await new TenantAdminBootstrap(new SmokeRegistrar()).GenerateBootstrap({
             tenant: InClusterFederationSmoke.Tenant(),
             hive: InClusterFederationSmoke.Hive(),
-            tenantAdminImage: S.Image,
+            tenantAdminImage: S.TenantAdminImage,
             postgresImage: IdpDatabaseSecret.DevImage,
             tenantPlanePort: S.TenantPlanePort,
             baseDomain: S.BaseDomain,
             externalScheme: S.ExternalScheme,
             channelUrl: S.ChannelUrl,
             idp: {
-                image: S.Image,
+                image: S.IdpImage,
                 port: S.IdpPort,
                 tlsSecretName: InClusterIdpSeedSource.TlsSecretNameOf(S.TenantId),
                 adminTokenSecretName: InClusterIdpSeedSource.AdminSecretNameOf(S.TenantId),
@@ -369,7 +377,7 @@ export class InClusterFederationSmoke
         await writeFile(join(keysDir, S.SigningKeyRef + FileKeyStore.PrivateSuffix), pair.privateKey.export({ type: S.Pkcs8, format: S.Pem }), S.Utf8)
         const hive = InClusterFederationSmoke.Hive()
         const signatures = new FileSignatureStore(join(dataRoot, S.SignaturesFileName))
-        await new ImageSigner(new DockerImageDigest(), signatures, new FileKeyStore(keysDir)).Sign(EffectiveRegistry.For(hive).ImageRef(S.Image), S.SigningKeyRef)
+        await new ImageSigner(new DockerImageDigest(), signatures, new FileKeyStore(keysDir)).Sign(EffectiveRegistry.For(hive).ImageRef(S.ServerImage), S.SigningKeyRef)
         const directory = new SeededTenantDirectory({ tenant: InClusterFederationSmoke.Tenant(), hives: [hive] })
         const docker = new DockerEnvAdapter(new DockerEnv())
         const registry = new EnvironmentRegistry(join(dataRoot, S.RegistryFileName), docker)

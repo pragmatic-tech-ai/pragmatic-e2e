@@ -5,11 +5,7 @@ container repository can own it. Seeded from pragmatic-server (dev-kit plan A3, 
 
 | Folder | What |
 |---|---|
-| `src/live-loop/` | The Plexus runtime live-loop stack (`live-loop-stack.ts up/down`) and its orchestrator (`loop-orchestrator.ts`), which `up` bakes the dev images it runs (`src/dev/dev-images.ts`: env server, UI unpack, hive agent, tenant IdP) from their
-container repositories' checkouts in `PRAGMATIC_E2E_REPOS_DIR`, then loads them onto its kind node; see
-`src/dev/README.md` ("Dev images").
-
-Plexus's e2e spawns |
+| `src/live-loop/` | The Plexus runtime live-loop stack (`live-loop-stack.ts up/down`) and its orchestrator (`loop-orchestrator.ts`), which Plexus's e2e spawns |
 | `src/dev/` | The durable local dev stack (`dev-up.sh`, `dev-seed.sh`, `dev-down.sh`, the dev kind cluster, the CA trust scripts) |
 | `src/smoke/` | Operator-run smokes against Docker, kind and live consoles (not `*.test.ts`; each file says how to run it) |
 | `src/e2e/` | Tests that span containers: the consoles (platform admin, tenant admin, edge, IdP), the env cluster (env server and gateway) and the capstones |
@@ -48,6 +44,11 @@ npx tsx src/live-loop/live-loop-stack.ts up     # needs docker with buildx, kind
 # Plexus: SP_RUNTIME_LOOP_E2E=1 PLEXUS_E2E_STACK=~/.pragmatic/e2e-stack/stack.json npx playwright test e2e/runtime-live-loop.spec.ts
 npx tsx src/live-loop/live-loop-stack.ts down
 ```
+
+`up` bakes the dev images it runs (`src/dev/dev-images.ts`: env server, UI unpack, hive agent, tenant IdP) from their
+container repositories' checkouts in `PRAGMATIC_E2E_REPOS_DIR` (`PRAGMATIC_DEV_SKIP_IMAGE_BAKE=1` skips the bake when they
+are fresh), then loads them onto its kind node; see `src/dev/README.md` ("Dev images"). Run `npm ci` and `npm run
+siblings` here first: the builder reads the image names from the pinned pragmatic-platform-admin sources.
 
 Plexus's e2e spawns `src/live-loop/loop-orchestrator.ts` from `PRAGMATIC_E2E_REPO` (default: the `pragmatic-e2e`
 checkout beside Plexus), so this repository needs `npm ci` and `npm run siblings` done there.

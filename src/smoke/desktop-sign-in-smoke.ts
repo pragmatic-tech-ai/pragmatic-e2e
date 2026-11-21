@@ -23,6 +23,8 @@ import { join } from 'node:path'
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { DevStackFolders } from '../dev/dev-stack-folders.js'
 import { DockerEnv } from '../../repos/pragmatic-platform-admin/src/environments/seed/docker.js'
+import { DevPlatformImages } from '../../repos/pragmatic-platform-admin/src/platform-images.js'
+import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { UserSeeder, AdminProxy, WsAdminConnector, ClusterTunnelPool, BundleBuilderAdapter, UserSeederAdapter, EnvironmentEndpoints, EnvironmentPlacement, EnvironmentRegistry, EnvironmentRuntimeResolver, DockerEnvironmentRuntime, EnvironmentService, IdpAdminClient, InClusterEnvironmentRuntime, NetPortProbe, PortAllocator } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { ClientRegistry } from '../../repos/pragmatic-platform-admin/src/client-registry.js'
 import { DockerEnvAdapter } from '../../repos/pragmatic-platform-admin/src/docker-env-port.js'
@@ -409,7 +411,7 @@ export class DesktopSignInSmoke
         const orchestrators = new PlatformHiveOrchestratorFactory(undefined, this.dataRoot)
         const placement = new EnvironmentPlacement(directory)
         const bundle = new BundleBuilderAdapter()
-        const idp = new IdpService(new IdpRegistry(join(this.dataRoot, S.IdpsFile)), new DockerIdpDriver(new PortAllocator(0, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), this.dataRoot, DockerEnv.ImageName))
+        const idp = new IdpService(new IdpRegistry(join(this.dataRoot, S.IdpsFile)), new DockerIdpDriver(new PortAllocator(0, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), this.dataRoot, DevPlatformImages.Of(ReleaseApp.TenantIdp)))
         const tunnels = new ClusterTunnelPool()
         const endpoints = new EnvironmentEndpoints(orchestrators, directory, tunnels, new NodeProcessSpawner())
         const service = new EnvironmentService(

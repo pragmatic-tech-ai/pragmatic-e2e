@@ -1,8 +1,9 @@
 /**
  * GATED integration smoke for the control plane. NOT part of `tsx --test`.
  *
- * Requires Docker running and the `pragmatic-server:dev` image baked (`npx tsx src/dev/dev-images.ts
- * pragmatic-env-server`; see src/dev/README.md, "Dev images"). Run with:
+ * Requires Docker running and the `pragmatic-server:dev` (environments) and `pragmatic-tenant-idp:dev` (the tenant IdP)
+ * images baked (`npx tsx src/dev/dev-images.ts pragmatic-env-server pragmatic-tenant-idp`; see src/dev/README.md, "Dev
+ * images"). Run with:
  *
  *   npx tsx src/smoke/control-plane-smoke.ts
  *
@@ -23,6 +24,8 @@ import { BundleBuilder, UserSeeder, AdminProxy, WsAdminConnector, ManifestRegist
 import { RuntimeReaderSecurity } from '../../repos/pragmatic-platform-admin/src/runtime-reader-security.js'
 import { type BuiltHelloApp, HelloAppBuilder } from '../e2e/capstones/hello-app-builder.js'
 import { DockerEnv } from '../../repos/pragmatic-platform-admin/src/environments/seed/docker.js'
+import { DevPlatformImages } from '../../repos/pragmatic-platform-admin/src/platform-images.js'
+import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { ControlPlaneHost, type EnvironmentDto } from '../../repos/pragmatic-platform-admin/src/control-plane-host.js'
 import type { TenantProvisioningService } from '../../repos/pragmatic-platform-admin/src/tenant-provisioning-service.js'
 import { PlatformHiveOrchestratorFactory } from '../../repos/pragmatic-platform-admin/src/platform-hive-orchestrator-factory.js'
@@ -226,7 +229,7 @@ export class ControlPlaneSmoke
         await directory.Load()
         const allocator = new PortAllocator(ControlPlaneSmoke.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
-        const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneSmoke.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneSmoke.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
+        const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneSmoke.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneSmoke.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DevPlatformImages.Of(ReleaseApp.TenantIdp)))
         const orchestrators = new PlatformHiveOrchestratorFactory()
         const placement = new EnvironmentPlacement(directory)
         const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
