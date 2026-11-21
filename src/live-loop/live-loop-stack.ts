@@ -22,8 +22,8 @@
  *
  * The services run from the sibling checkouts under PRAGMATIC_E2E_REPOS_DIR (default: the folder this repository sits in),
  * each with its own `npm ci` done: pragmatic-platform-admin, pragmatic-platform-edge and pragmatic-tenant-admin (for its
- * portal). Requires docker, kind and kubectl on PATH, a FRESH `pragmatic-server:dev` image (pragmatic-env-server's
- * `docker/Dockerfile`), free host ports 443, 30500, 7000, 7001, 7002 and 7100, and the Playwright Chromium browser.
+ * portal). Requires docker, kind and kubectl on PATH, FRESH `pragmatic-server:dev` (pragmatic-env-server's
+ * `docker/Dockerfile`) and `pragmatic-ui-unpack:dev` (the pragmatic-ui-unpack repository) images, free host ports 443, 30500, 7000, 7001, 7002 and 7100, and the Playwright Chromium browser.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
@@ -31,7 +31,7 @@ import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } 
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { InClusterRegistry, NetPortProbe } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { EnvironmentWorkloadFactory, InClusterRegistry, NetPortProbe } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { RepositoryRoots } from '../stack/repository-roots.js'
 import { KindCli } from '../../repos/pragmatic-platform-admin/src/kind.js'
 import { NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
@@ -561,7 +561,7 @@ export class LiveLoopStack
         {
             await this.kind.CreateCluster(N.ClusterName, { extraPortMappings: [L.HttpsPort, InClusterRegistry.NodePort] })
         }
-        for (const image of [L.ServerImage, InClusterRegistry.Image, L.PostgresImage])
+        for (const image of [L.ServerImage, EnvironmentWorkloadFactory.UiUnpackImage, InClusterRegistry.Image, L.PostgresImage])
         {
             await this.EnsureLocalImage(image)
             await this.kind.LoadImage(image, N.ClusterName)

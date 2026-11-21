@@ -2,13 +2,13 @@
  * GATED real-cluster, real-browser end-to-end smoke for in-cluster UI serving (SP-HIVE UI-serving, Spec 4). OPERATOR-RUN ONLY:
  * NOT a *.test.ts, NOT part of `tsx --test` / `npm test`, never executed by CI.
  *
- * Requires on PATH: `docker`, `kind`, `kubectl`, a running Docker daemon, a FRESH `pragmatic-server:dev` image in the local docker
+ * Requires on PATH: `docker`, `kind`, `kubectl`, a running Docker daemon, FRESH `pragmatic-server:dev` and `pragmatic-ui-unpack:dev` images in the local docker
  * image store, network access to pull `registry:2`, the Playwright Chromium browser, host ports 443 and InClusterRegistry.NodePort
  * (30500) free, and public DNS for `*.localtest.me` (resolves to 127.0.0.1) for the Node-side IdP admin calls. Run with:
  *
  *   npx tsx src/smoke/in-cluster-ui-serving-smoke.ts
  *
- * Steps: (1) create a kind cluster with :443 + registry node port mappings and load the server image + registry:2; (2) install
+ * Steps: (1) create a kind cluster with :443 + registry node port mappings and load the server and ui-unpack images + registry:2; (2) install
  * ingress-nginx with --enable-ssl-passthrough; (3) apply the in-cluster registry and wait for it; (4) provision the tenant IdP, then
  * compose the real EnvironmentService with a UiDeployActuator pointed at the registry node port; (5) create a federated environment
  * and deploy the Northwind UI bundle to it; (6) drive a real Chromium to /app/<tenant>/northwind/ and assert the marker shell and the
@@ -228,6 +228,7 @@ export class InClusterUiServingSmoke
             await this.exec.Run(S.Docker, [S.PullVerb, InClusterRegistry.Image])
             await this.kind.CreateCluster(S.ClusterName, { extraPortMappings: [S.HttpsPort, InClusterRegistry.NodePort] })
             await this.kind.LoadImage(S.Image, S.ClusterName)
+            await this.kind.LoadImage(EnvironmentWorkloadFactory.UiUnpackImage, S.ClusterName)
             await this.kind.LoadImage(InClusterRegistry.Image, S.ClusterName)
             this.Expect(S.Labels.Cluster, true)
 
@@ -508,7 +509,12 @@ export class InClusterUiServingSmoke
         this.keys = keys
         const hive = S.Hive()
         const signatures = new FileSignatureStore(join(dataRoot, S.SignaturesFileName))
-        await new ImageSigner(new DockerImageDigest(), signatures, keys).Sign(EffectiveRegistry.For(hive).ImageRef(S.Image), S.SigningKeyRef)
+        // The app's UI is unpacked by its own image (verified like the server's), so both are signed.
+        const signer = new ImageSigner(new DockerImageDigest(), signatures, keys)
+        for (const image of [S.Image, EnvironmentWorkloadFactory.UiUnpackImage])
+        {
+            await signer.Sign(EffectiveRegistry.For(hive).ImageRef(image), S.SigningKeyRef)
+        }
         const directory = new SeededTenantDirectory({ tenant: S.Tenant(), hives: [hive] })
         const docker = new DockerEnvAdapter(new DockerEnv())
         const registry = new EnvironmentRegistry(join(dataRoot, S.RegistryFileName), docker)

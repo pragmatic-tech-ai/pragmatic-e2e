@@ -56,7 +56,7 @@ class FakeDocker implements IExecFile
 
 class DevClusterFx
 {
-    public static readonly AllImages = ['pragmatic-server:dev', 'registry:2', 'postgres:16']
+    public static readonly AllImages = ['pragmatic-server:dev', 'pragmatic-ui-unpack:dev', 'registry:2', 'postgres:16']
     public static readonly Loads = DevClusterFx.AllImages.map(i => 'load ' + i + ' pragmatic-dev')
 
     public static Silent(kind: IKind, docker: IExecFile): DevCluster
@@ -83,7 +83,7 @@ describe('DevCluster.Up', () =>
 
     it('pulls a missing public image before loading it', async () =>
     {
-        const docker = new FakeDocker(['pragmatic-server:dev', 'registry:2'])
+        const docker = new FakeDocker(['pragmatic-server:dev', 'pragmatic-ui-unpack:dev', 'registry:2'])
         await DevClusterFx.Silent(new FakeKind(), docker).Up()
         assert.ok(docker.Calls.includes('docker pull postgres:16'))
         assert.ok(!docker.Calls.includes('docker pull registry:2'))
@@ -92,10 +92,21 @@ describe('DevCluster.Up', () =>
     it('refuses when the server image was never built, and never tries to pull it', async () =>
     {
         const kind = new FakeKind()
-        const docker = new FakeDocker(['registry:2', 'postgres:16'])
-        await assert.rejects(DevClusterFx.Silent(kind, docker).Up(), /pragmatic-server:dev is not in the local docker store; build it first/)
+        const docker = new FakeDocker(['pragmatic-ui-unpack:dev', 'registry:2', 'postgres:16'])
+        await assert.rejects(DevClusterFx.Silent(kind, docker).Up(), /pragmatic-server:dev is not in the local docker store; build it first \(docker\/Dockerfile of pragmatic-env-server\)/)
         assert.ok(!docker.Calls.includes('docker pull pragmatic-server:dev'))
         assert.ok(!kind.Calls.some(c => c.startsWith('load ')))
+    })
+})
+
+describe('DevCluster.Up (the ui-unpack image)', () =>
+{
+    it('refuses when the ui-unpack image was never built, naming its repository, and never tries to pull it', async () =>
+    {
+        const kind = new FakeKind()
+        const docker = new FakeDocker(['pragmatic-server:dev', 'registry:2', 'postgres:16'])
+        await assert.rejects(DevClusterFx.Silent(kind, docker).Up(), /pragmatic-ui-unpack:dev is not in the local docker store; build it first \(the pragmatic-ui-unpack repository\)/)
+        assert.ok(!docker.Calls.includes('docker pull pragmatic-ui-unpack:dev'))
     })
 })
 

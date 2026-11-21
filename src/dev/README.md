@@ -20,7 +20,7 @@ role `admin`; the agent channel is the platform edge's (`pragmatic-platform-edge
   password and URL files live in the IdP's data volume; removing the IdP's volume removes the companion's too).
   Login redirects from the tenant panel land on it.
 - **Local hive:** `acme-hive` (`backend=local, mode=attach`) bound to tenant `acme`, on the dev kind cluster
-  `pragmatic-dev` (context `kind-pragmatic-dev`). `dev-up.sh` creates it when missing and loads `pragmatic-server:dev`,
+  `pragmatic-dev` (context `kind-pragmatic-dev`). `dev-up.sh` creates it when missing and loads `pragmatic-server:dev`, `pragmatic-ui-unpack:dev` (built in the pragmatic-ui-unpack repository),
   `registry:2` and `postgres:16` onto its node on every run, so a rebuilt server image reaches the hive. It maps no host
   port, so it runs beside Caddy and the live-loop e2e cluster. Docker Desktop's built-in Kubernetes is not used; you can
   turn it off. Manage the cluster on its own with `npx tsx src/dev/dev-cluster.ts up|down` from this repository (needs

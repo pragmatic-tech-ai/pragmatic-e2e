@@ -5,23 +5,29 @@
  *   npx tsx src/dev/dev-cluster.ts up     # create it when missing, then load the images onto its node
  *   npx tsx src/dev/dev-cluster.ts down   # delete it
  *
- * `up` is idempotent and re-loads the images every time, so a rebuilt `pragmatic-server:dev` reaches the node (a kind node
+ * `up` is idempotent and re-loads the images every time, so a rebuilt `pragmatic-server:dev` (or `pragmatic-ui-unpack:dev`) reaches the node (a kind node
  * keeps its own image store; pods pull with IfNotPresent). It maps no host port: dev-up's Caddy holds :443 and the live-loop
  * e2e cluster maps :443 and :30500, so this cluster can run beside both. Requires docker and kind on PATH, and a built
- * `pragmatic-server:dev` (registry:2 and postgres:16 are pulled when missing).
+ * `pragmatic-server:dev` and `pragmatic-ui-unpack:dev` (registry:2 and postgres:16 are pulled when missing).
  */
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { KindCli, type IKind } from '../../repos/pragmatic-platform-admin/src/kind.js'
 import { NodeExecFile, type IExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
-import { LocalDevCluster } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { EnvironmentWorkloadFactory, LocalDevCluster } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 export class DevCluster
 {
-    /** What the dev hive's workloads run: the server (and IdP), the in-cluster registry and environment Postgres. */
-    public static readonly Images: readonly string[] = ['pragmatic-server:dev', 'registry:2', 'postgres:16']
-    /** Built locally, never pulled. */
-    public static readonly LocalOnlyImage = 'pragmatic-server:dev'
+    public static readonly ServerImage = 'pragmatic-server:dev'
+    /** The init container that unpacks a deployed app's UI (tenant plane 0.17.3: its own image, verified like the server's). */
+    public static readonly UiUnpackImage = EnvironmentWorkloadFactory.UiUnpackImage
+    /** What the dev hive's workloads run: the server (and IdP), the UI unpacker, the in-cluster registry and environment Postgres. */
+    public static readonly Images: readonly string[] = [DevCluster.ServerImage, DevCluster.UiUnpackImage, 'registry:2', 'postgres:16']
+    /** Built locally, never pulled: each image with the hint naming where it is built. */
+    public static readonly LocalOnlyImages: ReadonlyMap<string, string> = new Map([
+        [DevCluster.ServerImage, 'docker/Dockerfile of pragmatic-env-server'],
+        [DevCluster.UiUnpackImage, 'the pragmatic-ui-unpack repository'],
+    ])
     private static readonly UpVerb = 'up'
     private static readonly DownVerb = 'down'
     private static readonly Docker = 'docker'
@@ -29,7 +35,8 @@ export class DevCluster
     private static readonly InspectVerb = 'inspect'
     private static readonly PullVerb = 'pull'
     private static readonly UsageMessage = 'usage: dev-cluster.ts up|down'
-    private static readonly NotBuiltMessage = 'pragmatic-server:dev is not in the local docker store; build it first (docker/Dockerfile of pragmatic-env-server)'
+    private static readonly NotBuiltInfix = ' is not in the local docker store; build it first ('
+    private static readonly NotBuiltSuffix = ')'
     private static readonly CreatingMessage = '[dev-cluster] creating kind cluster ' + LocalDevCluster.Name
     private static readonly ExistsMessage = '[dev-cluster] kind cluster ' + LocalDevCluster.Name + ' already exists'
     private static readonly LoadingPrefix = '[dev-cluster] loading '
@@ -110,9 +117,10 @@ export class DevCluster
         }
         catch
         {
-            if (image === D.LocalOnlyImage)
+            const builtIn = D.LocalOnlyImages.get(image)
+            if (builtIn !== undefined)
             {
-                throw new Error(D.NotBuiltMessage)
+                throw new Error(image + D.NotBuiltInfix + builtIn + D.NotBuiltSuffix)
             }
         }
         await this.exec.Run(D.Docker, [D.PullVerb, image])
