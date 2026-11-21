@@ -281,6 +281,14 @@ export interface LiveLoopServiceSpec
     env: NodeJS.ProcessEnv
 }
 
+/** One service down stops: its pid file, the URL it answers while up and the port it holds. */
+export interface LiveLoopServiceStop
+{
+    pidFile: string
+    url: string
+    port: number
+}
+
 /**
  * The services the stack starts, each from its own repository (RepositoryRoots): the platform admin console (role
  * `admin`, with its internal API on loopback) and the platform edge (the agent channel the hive agent dials home to),
@@ -458,8 +466,8 @@ export class LiveLoopStack
     private static readonly PortBusyPrefix = 'port '
     private static readonly PortBusySuffix = ' is in use (is another control plane, e.g. dev-up.sh, running?); stop it before bringing the e2e stack up'
     private static readonly ExitedMessage = 'the control plane exited during start; see the log in the stack folder'
-    private static readonly EdgeExitedMessage = 'the platform edge exited during start; see edge.log in the stack folder'
-    private static readonly EdgeNotReadyMessage = 'the platform edge did not answer /healthz in time; see edge.log in the stack folder'
+    private static readonly EdgeExitedMessage = 'the platform edge exited during start; see edge.log in the stack folder, then run down (the console is still up)'
+    private static readonly EdgeNotReadyMessage = 'the platform edge did not answer /healthz in time; see edge.log in the stack folder, then run down (the console is still up)'
     private static readonly AlreadyUpMessage = 'the e2e stack is already up (stack.json exists); run down first'
     private static readonly NotReadyMessage = 'the control plane did not answer /api/ping in time; see the log in the stack folder'
     private static readonly Steps = {
@@ -626,9 +634,10 @@ export class LiveLoopStack
         const L = LiveLoopStack
         const N = LiveLoopStackNames
         console.log(L.Steps.Down)
-        // Only a service that still answers is ours to stop; a dead one's pid may have been reused by another process.
-        await this.StopService(L.EdgePidFileName, N.EdgeBase + L.HealthzPath)
-        await this.StopService(L.PidFileName, N.OperatorBase + L.PingPath)
+        for (const stop of LiveLoopStack.StopPlan())
+        {
+            await this.StopService(stop)
+        }
         await this.BestEffort(() => this.exec.Run(L.Docker, [L.RmVerb, L.ForceFlag, L.RemoveVolumesFlag, L.ConsolePostgresContainer]))
         await this.BestEffort(() => this.exec.Run(L.Docker, [L.RmVerb, L.ForceFlag, L.IdpContainerPrefix + N.TenantId]))
         await this.BestEffort(() => this.exec.Run(L.Docker, [L.VolumeVerb, L.RmVerb, L.ForceFlag, L.IdpVolumePrefix + N.TenantId]))
@@ -698,14 +707,27 @@ export class LiveLoopStack
         return child
     }
 
-    /** Stops the service whose pid `pidName` holds, but only while `url` still answers: a dead one's pid may have been reused. */
-    private async StopService(pidName: string, url: string): Promise<void>
+    /** What down stops, in order: the edge first (it answers through the console), then the console. */
+    public static StopPlan(): readonly LiveLoopServiceStop[]
     {
         const L = LiveLoopStack
-        const pidFile = join(LiveLoopStackNames.StackDir, pidName)
-        if (existsSync(pidFile) && await LiveLoopStack.Answers(url))
+        const N = LiveLoopStackNames
+        return [
+            { pidFile: join(N.StackDir, L.EdgePidFileName), url: N.EdgeBase + L.HealthzPath, port: N.AgentChannelPort },
+            { pidFile: join(N.StackDir, L.PidFileName), url: N.OperatorBase + L.PingPath, port: N.OperatorPort },
+        ]
+    }
+
+    /**
+     * Stops the service whose pid file names it, but only while it is still ours: it answers its URL, or (hung) still
+     * holds its port. A dead one's pid may have been reused by another process.
+     */
+    private async StopService(stop: LiveLoopServiceStop): Promise<void>
+    {
+        const L = LiveLoopStack
+        if (existsSync(stop.pidFile) && (await LiveLoopStack.Answers(stop.url) || !await new NetPortProbe().Free(stop.port)))
         {
-            await this.BestEffort(() => new ProcessTree(this.exec).Kill(Number(readFileSync(pidFile, L.Utf8).trim())))
+            await this.BestEffort(() => new ProcessTree(this.exec).Kill(Number(readFileSync(stop.pidFile, L.Utf8).trim())))
         }
     }
 

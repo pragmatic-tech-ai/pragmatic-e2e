@@ -29,7 +29,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SiblingCheckouts } from '../stack/sibling-checkouts.js'
+import { RepositoryRoots } from '../stack/repository-roots.js'
 import { chromium } from 'playwright'
 import { DockerEnv } from '../../repos/pragmatic-platform-admin/src/environments/seed/docker.js'
 import { UserSeeder, BundleBuilderAdapter, UserSeederAdapter, DockerEnvironmentRuntime, EnvironmentRuntimeResolver, InClusterEnvironmentRuntime, EnvironmentRegistry, EnvironmentService, EnvStatus, EnvType, Template, type EnvironmentRecord, TemplateCatalog, BundleBuilder, EnvServerSeedSource, type EnvironmentWorkload, HiveBackend, InfraMode, type HiveRecord, AdminProxy, WsAdminConnector, IdpAdminClient, NetPortProbe, PortAllocator, ManifestRegistry, EnvironmentPlacement, type HiveOrchestratorFactory, type IHiveOrchestrator, K8sManifestBuilder, TenantAdminClientRegistry, TenantHostResolver, TenantConsoleHost, TenantPlaneComposer, TenantSessions } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
@@ -165,7 +165,7 @@ export class TenantLoginE2eSmoke
     private static readonly SeedDirPrefix = 'tenant-login-seed-'
 
 
-    /** The tenant portal's bundle, in the pragmatic-tenant-admin checkout under repos/ (`npm run build` there first). */
+    /** The tenant portal's bundle, in the full pragmatic-tenant-admin checkout of PRAGMATIC_E2E_REPOS_DIR (`npm run build` in tenant-portal/ first). */
     private static readonly TenantAdminRepo = 'pragmatic-tenant-admin'
     private static readonly TenantPortalDir = 'tenant-portal'
     private static readonly DistDir = 'dist'
@@ -381,7 +381,7 @@ export class TenantLoginE2eSmoke
             ClientSecrets: { Store: new MapSecretStore(), Registry: plane.adminClientRegistry, TtlMs: TenantPlaneComposer.SecretTtlMsOf(S.SecretTtlHours) },
             Desktop: true,
         })
-        const host = new TenantConsoleHost({ Plane: tenantPlane, Resolver: resolver, Service: plane.service, PortalRoot: SiblingCheckouts.PathOf(S.TenantAdminRepo, S.TenantPortalDir, S.DistDir) })
+        const host = new TenantConsoleHost({ Plane: tenantPlane, Resolver: resolver, Service: plane.service, PortalRoot: join(RepositoryRoots.FromEnvironment(process.env).Of(S.TenantAdminRepo), S.TenantPortalDir, S.DistDir) })
         await host.Listen(0, S.BindHost)
         const port = host.Address().port
         this.Check(S.M_ListenerUp, Number.isInteger(port) && port > 0, S.PortDetail + String(port))

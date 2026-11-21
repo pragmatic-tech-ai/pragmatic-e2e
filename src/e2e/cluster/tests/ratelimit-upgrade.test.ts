@@ -35,7 +35,7 @@ class Fixtures
 
     private static TlsDir(): string
     {
-        return SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'tls')
+        return SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, ClusterFixtures.Tls)
     }
 
     public static ServerTls(): MachineTlsRef
@@ -99,7 +99,7 @@ test('the worker host rejects a per-environment upgrade breach with 429 + Retry-
 {
     const baseDir = mkdtempSync(join(tmpdir(), 'ps-wh-rl-'))
     mkdirSync(join(baseDir, 't1'), { recursive: true })
-    cpSync(SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'sample-solution'), join(baseDir, 't1', 'solution'), { recursive: true })
+    cpSync(SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, ClusterFixtures.SampleSolution), join(baseDir, 't1', 'solution'), { recursive: true })
     process.env[Fixtures.KeyEnv] = randomBytes(32).toString('base64')
     const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 't1' }]])
     const worker = await WorkerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: Fixtures.KeyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries), tls: Fixtures.ServerTls(), rateLimit: Fixtures.Guard() })

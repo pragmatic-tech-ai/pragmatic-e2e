@@ -127,7 +127,7 @@ describe('SiblingCheckouts', () =>
     it('pins every repository the sources import from repos/', () =>
     {
         const F = SiblingFixture
-        const pins = SiblingCheckouts.ParsePins(readFileSync(join(RepositoryRoots.OwnRoot, SiblingCheckouts.PinsFile), F.Utf8))
+        const pins = SiblingCheckouts.Pins()
         const imported = new Set<string>()
         for (const file of F.SourceFiles(join(RepositoryRoots.OwnRoot, F.SourceDir)))
         {
@@ -143,9 +143,10 @@ describe('SiblingCheckouts', () =>
         }
     })
 
-    it('PathOf names a file inside a sibling checkout under repos/', () =>
+    it('PathOf names a file inside a pinned sibling checkout under repos/ and refuses an unpinned repository', () =>
     {
         const F = SiblingFixture
         assert.equal(SiblingCheckouts.PathOf(F.Admin, F.SourceDir, 'kind.ts'), join(RepositoryRoots.OwnRoot, SiblingCheckouts.ReposDir, F.Admin, F.SourceDir, 'kind.ts'))
+        assert.throws(() => SiblingCheckouts.PathOf('pragmatic-not-pinned'), SiblingPinsInvalidError)
     })
 })

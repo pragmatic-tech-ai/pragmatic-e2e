@@ -37,8 +37,11 @@ the master key, public keys, the development CA, environment bundles, and the da
 (`postgres/`). A data folder from before the database is imported once by `dev-up.sh` (pragmatic-platform-admin's
 `src/bin/pragmatic-admin-import.ts`; its JSON files are left as they are).
 
-Coming from pragmatic-server: the stack used to keep this folder at `pragmatic-server/admin/control-plane/data`.
-Move that folder to `~/.pragmatic/dev-stack/data` once (or point `PRAGMATIC_DEV_DATA_ROOT` at it) before the first
+The Caddy TLS material (`lvh.crt`, `lvh.key`, `dev-ca.crt`) lives in `~/.pragmatic/dev-stack/certs`.
+
+Coming from pragmatic-server: the stack used to keep these at `pragmatic-server/admin/control-plane/data` and
+`pragmatic-server/admin/control-plane/dev/certs`. Move them to `~/.pragmatic/dev-stack/data` and
+`~/.pragmatic/dev-stack/certs` once (or point `PRAGMATIC_DEV_DATA_ROOT` at the data folder) before the first
 `dev-up.sh`; the database volume is the same. Stop and restart anytime — state (and the IdP
 container + volume) persists. To start over, remove the container and `docker volume rm pragmatic-dev-postgres-data`.
 
@@ -59,7 +62,7 @@ bash src/dev/dev-seed.sh   # (first run only) seeds client + tenant acme + local
 bash src/dev/dev-down.sh   # stops the Caddy proxy (Ctrl-C the dev-up terminal to stop the console)
 ```
 
-`dev-info.txt` (gitignored) holds the URLs and the one-time tenant-owner password captured at provision time.
+`~/.pragmatic/dev-stack/dev-info.txt` (outside every repository) holds the URLs and the one-time tenant-owner password captured at provision time.
 Log into the tenant panel at `https://acme.lvh.me` as `owner@acme.test` with that password.
 
 ## Dev tradeoffs (vs production)
@@ -68,13 +71,16 @@ Log into the tenant panel at `https://acme.lvh.me` as `owner@acme.test` with tha
   (one shared secure-cookie flag drives both planes). They still work over the tenant panel's HTTPS. To make
   them `Secure`, front the operator plane with TLS too and set `PRAGMATIC_ADMIN_SECURE_COOKIE=true`.
 - TLS uses a local dev CA (not a public one); hence the one-time `trust-ca.ps1` step.
-- Each additional tenant gets its own IdP CA under `data/idp/<tenant>/tls/ca.crt`. It is name-constrained to
+- Each additional tenant gets its own IdP CA under `<data folder>/idp/<tenant>/tls/ca.crt` (the data folder is
+  `PRAGMATIC_DEV_DATA_ROOT`, default `~/.pragmatic/dev-stack/data`). It is name-constrained to
   `host.docker.internal` and `127.0.0.1`, so trust it for your Windows user with `dev-ca-trust.ps1` (see below).
 
 ## Development console certificates
 
 The in-hive console is served over TLS signed by a per-domain development CA. The portal shows the CA file path;
-trust it for your Windows user (no elevation, Windows shows its own confirmation) or remove it again:
+trust it for your Windows user (no elevation, Windows shows its own confirmation) or remove it again. The commands
+below run from this repository's root; the portal's copyable command runs from the folder that holds the checkouts
+(`pragmatic-e2e\src\dev\dev-ca-trust.ps1`):
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File src\dev\dev-ca-trust.ps1 -CaFile <ca.crt> -Install
@@ -88,11 +94,11 @@ anything that is not a name-constrained CA. After the CA file is gone, remove it
 
 ## Local platform IdP certificates
 
-A tenant's local IdP container serves TLS signed by its own CA, `data/idp/<tenant>/tls/ca.crt`, name-constrained to
+A tenant's local IdP container serves TLS signed by its own CA, `<data folder>/idp/<tenant>/tls/ca.crt`, name-constrained to
 `host.docker.internal` and `127.0.0.1`. Trust or remove it with the same `dev-ca-trust.ps1` commands as above.
 
 An IdP whose CA predates the name constraint is refused by `-Install`. To replace that CA, stop the control plane,
-delete the whole `data/idp/<tenant>/tls/` directory (only a missing directory is re-minted; a partly missing set of
+delete the whole `<data folder>/idp/<tenant>/tls/` directory (only a missing directory is re-minted; a partly missing set of
 files still fails recovery, so a CA is never replaced by accident), and start it again. The next tenant sign-in or
 environment action recovers the IdP in place (same port and identity volume) with a new, constrained CA.
 Environments created before the swap still trust the old CA, so recreate them.

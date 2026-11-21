@@ -23,7 +23,9 @@ done
 DATA="${PRAGMATIC_DEV_DATA_ROOT:-$HOME/.pragmatic/dev-stack/data}"
 mkdir -p "$DATA"
 export PRAGMATIC_ADMIN_DATA_ROOT="$DATA"
-CERTS_WIN="$(cd "$HERE/certs" && pwd -W)"
+CERTS="$HOME/.pragmatic/dev-stack/certs"
+[ -d "$CERTS" ] || { echo "[dev-up] no Caddy TLS material in $CERTS (lvh.crt, lvh.key, dev-ca.crt; README.md)" >&2; exit 1; }
+CERTS_WIN="$(cd "$CERTS" && pwd -W)"
 CADDYFILE_WIN="$(cd "$HERE" && pwd -W)/Caddyfile"
 
 # 0) The dev kind cluster `pragmatic-dev` the local hive runs on (created when missing; the images re-loaded each run).

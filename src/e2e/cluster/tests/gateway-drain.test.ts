@@ -39,7 +39,7 @@ class StubRouter implements IWorkerRouter
 
 class GwFixture
 {
-    private static readonly Dir = SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'tls')
+    private static readonly Dir = SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, ClusterFixtures.Tls)
     public static readonly KeyEnv = 'PS_GWD_KEY'
 
     public static Tls(): MachineTlsRef
@@ -110,7 +110,7 @@ class BackingWorker
     {
         const baseDir = mkdtempSync(join(tmpdir(), 'ps-gwd-'))
         mkdirSync(join(baseDir, 't1'), { recursive: true })
-        cpSync(join(GwFixture.Tls().certFile, '..', '..', 'sample-solution'), join(baseDir, 't1', 'solution'), { recursive: true })
+        cpSync(join(GwFixture.Tls().certFile, '..', '..', ClusterFixtures.SampleSolution), join(baseDir, 't1', 'solution'), { recursive: true })
         process.env[GwFixture.KeyEnv] = randomBytes(32).toString('base64')
         const provisioning = new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'T1' }]]))
         const worker = await WorkerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: GwFixture.KeyEnv }, provisioning, tls: GwFixture.Tls() })

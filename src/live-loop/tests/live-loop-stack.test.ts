@@ -292,6 +292,18 @@ describe('LiveLoopStack.ReleaseEnv', () =>
     })
 })
 
+describe('LiveLoopStack.StopPlan', () =>
+{
+    it('stops the edge first, then the console, each by its pid file, health URL and port', () =>
+    {
+        const N = LiveLoopStackNames
+        assert.deepEqual(LiveLoopStack.StopPlan(), [
+            { pidFile: join(N.StackDir, 'edge.pid'), url: 'http://127.0.0.1:7001/healthz', port: N.AgentChannelPort },
+            { pidFile: join(N.StackDir, 'control-plane.pid'), url: 'http://127.0.0.1:7000/api/ping', port: N.OperatorPort },
+        ])
+    })
+})
+
 describe('LiveLoopStack.Redact', () =>
 {
     it('replaces the stack passwords in any failure text (the owner one-time password joins them once minted)', () =>

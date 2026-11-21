@@ -2,13 +2,13 @@
 # without warnings:  Right-click -> Run with PowerShell (as Admin), or:  powershell -ExecutionPolicy Bypass -File trust-ca.ps1
 #
 # Trusts:
-#   - certs\dev-ca.crt       the CA behind Caddy's *.lvh.me cert (the tenant admin panel at https://<tenant>.lvh.me)
+#   - %USERPROFILE%\.pragmatic\dev-stack\certs\dev-ca.crt   the CA behind Caddy's *.lvh.me cert (the tenant admin panel at https://<tenant>.lvh.me)
 #
 # Tenant IdP CAs are NOT trusted here. Each tenant's IdP has its own name-constrained CA under
-# data\idp\<tenant>\tls\ca.crt; trust it for your user with dev-ca-trust.ps1 (no elevation; it refuses any CA
+# %USERPROFILE%\.pragmatic\dev-stack\data\idp\<tenant>\tls\ca.crt (or PRAGMATIC_DEV_DATA_ROOT); trust it for your user with dev-ca-trust.ps1 (no elevation; it refuses any CA
 # that is not name-constrained). See README.md, "Local platform IdP certificates".
 $ErrorActionPreference = 'Stop'
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$here = Join-Path $env:USERPROFILE '.pragmatic\dev-stack'
 $certs = @('certs\dev-ca.crt')
 foreach ($rel in $certs)
 {

@@ -22,14 +22,14 @@ class ClusterFixture
 
     public static TlsRef(): MachineTlsRef
     {
-        const dir = SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'tls')
+        const dir = SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, ClusterFixtures.Tls)
         return { certFile: join(dir, 'server.pem'), keyFile: join(dir, 'server.key'), caFile: join(dir, 'ca.pem') }
     }
 
     public static Start(...environmentIds: string[]): { baseDir: string }
     {
         const baseDir = mkdtempSync(join(tmpdir(), 'ps-cl-'))
-        const fixture = SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'sample-solution')
+        const fixture = SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, ClusterFixtures.SampleSolution)
         for (const id of environmentIds)
         {
             mkdirSync(join(baseDir, id), { recursive: true })

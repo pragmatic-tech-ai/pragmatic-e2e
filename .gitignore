@@ -4,7 +4,5 @@ node_modules/
 repos/
 test-results/
 playwright-report/
-# The dev stack's local TLS material, its seed output and logs (src/dev/README.md).
-src/dev/certs/
-src/dev/dev-info.txt
+# Logs of the dev stack (its TLS material and seed output live under ~/.pragmatic/dev-stack, outside the repository).
 src/dev/*.log

@@ -2,13 +2,14 @@
 # Seeds the durable dev deployment via the operator API (the same path the operator panel UI uses):
 #   client "dev-client" -> tenant "acme" (launches its per-tenant pragmatic-idp container) -> local hive "acme-hive".
 # Idempotent-ish: re-running after the tenant exists just reports the existing owner can't be re-revealed.
-# Writes connection details + the one-time tenant owner password to dev/dev-info.txt (gitignored).
+# Writes connection details + the one-time tenant owner password to ~/.pragmatic/dev-stack/dev-info.txt (outside every repository).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OP='http://127.0.0.1:7000'
 ORIGIN="-H Origin:${OP}"
 JAR="$(mktemp)"
-INFO="$HERE/dev-info.txt"
+mkdir -p "$HOME/.pragmatic/dev-stack"
+INFO="$HOME/.pragmatic/dev-stack/dev-info.txt"
 
 echo "[seed] operator login"
 curl -fsS -c "$JAR" -X POST "$OP/api/login" -H 'Content-Type: application/json' \

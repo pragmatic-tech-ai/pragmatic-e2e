@@ -70,6 +70,7 @@ export class SiblingCheckouts
     private static readonly NotObject = 'expected an object of repository name to commit'
     private static readonly BadName = 'not a repository folder name: '
     private static readonly BadPin = 'not a 40-hex commit for '
+    private static readonly NotPinned = 'not a pinned repository: '
     private static readonly CheckedOutPrefix = '[siblings] '
     private static readonly At = ' @ '
     private static readonly Clone = ['clone', '--quiet', '--no-checkout'] as const
@@ -85,10 +86,22 @@ export class SiblingCheckouts
     {
     }
 
-    /** A path inside the checkout of `repo` under repos/ (a fixture, a UI folder). */
+    /** A path inside the checkout of `repo` under repos/ (a fixture); refuses a repository siblings.json does not pin. */
     public static PathOf(repo: string, ...segments: string[]): string
     {
-        return join(SiblingCheckouts.Root, repo, ...segments)
+        const S = SiblingCheckouts
+        if (!S.Pins().has(repo))
+        {
+            throw new SiblingPinsInvalidError(S.NotPinned + JSON.stringify(repo))
+        }
+        return join(S.Root, repo, ...segments)
+    }
+
+    /** The pins of this repository's siblings.json. */
+    public static Pins(): ReadonlyMap<string, string>
+    {
+        const S = SiblingCheckouts
+        return S.ParsePins(readFileSync(join(RepositoryRoots.OwnRoot, S.PinsFile), S.Utf8))
     }
 
     /** Pure: the pins of a siblings.json text, in file order. */
@@ -142,9 +155,7 @@ export class SiblingCheckouts
 
     public static async Main(): Promise<void>
     {
-        const S = SiblingCheckouts
-        const pins = S.ParsePins(readFileSync(join(RepositoryRoots.OwnRoot, S.PinsFile), S.Utf8))
-        await new SiblingCheckouts().Sync(pins)
+        await new SiblingCheckouts().Sync(SiblingCheckouts.Pins())
     }
 
     public static IsEntryPoint(): boolean

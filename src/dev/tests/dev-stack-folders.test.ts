@@ -34,5 +34,11 @@ describe('DevStackFolders', () =>
         assert.ok(up.includes('${PRAGMATIC_E2E_REPOS_DIR:-'))
         assert.ok(up.includes('/pragmatic-platform-admin'))
         assert.ok(up.includes('export PRAGMATIC_CONTROL_PLANE_ROLE=admin'))
+        assert.ok(up.includes('CERTS="$HOME/.pragmatic/dev-stack/certs"'))
+    })
+
+    it('dev-seed.sh writes the one-time owner password outside every repository', () =>
+    {
+        assert.ok(DevScripts.Text('dev-seed.sh').includes('INFO="$HOME/.pragmatic/dev-stack/dev-info.txt"'))
     })
 })

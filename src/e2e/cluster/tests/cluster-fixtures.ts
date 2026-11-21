@@ -9,4 +9,6 @@ export class ClusterFixtures
     public static readonly Src = 'src'
     public static readonly Tests = 'tests'
     public static readonly Fixtures = 'fixtures'
+    public static readonly Tls = 'tls'
+    public static readonly SampleSolution = 'sample-solution'
 }

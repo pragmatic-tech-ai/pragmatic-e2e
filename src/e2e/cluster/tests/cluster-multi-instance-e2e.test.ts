@@ -25,7 +25,7 @@ class Fixture
 
     private static Dir(): string
     {
-        return SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'tls')
+        return SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, ClusterFixtures.Tls)
     }
 
     public static ServerTls(): MachineTlsRef
@@ -43,7 +43,7 @@ class Fixture
     public static Seed(environment: string): string
     {
         const baseDir = mkdtempSync(join(tmpdir(), 'ps-clmi-'))
-        const solution = SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'sample-solution')
+        const solution = SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, ClusterFixtures.SampleSolution)
         mkdirSync(join(baseDir, environment), { recursive: true })
         cpSync(solution, join(baseDir, environment, 'solution'), { recursive: true })
         process.env[Fixture.KeyEnv] = randomBytes(32).toString('base64')
