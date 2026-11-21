@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { LiveLoopPortalBuild, LiveLoopServices, LiveLoopStack, LiveLoopStackAgent, LiveLoopStackNames, LiveLoopStackSeed, type IPortalBuildRunner } from '../live-loop-stack.js'
 import { RepositoryMissingError, RepositoryRoots } from '../../stack/repository-roots.js'
 import type { ApiAnswer, IOperatorApi } from '../operator-api-client.js'
+import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { DevImages } from '../../dev/dev-images.js'
 
 class FakeOperatorApi implements IOperatorApi
 {
@@ -289,6 +291,26 @@ describe('LiveLoopStack.ReleaseEnv', () =>
     {
         assert.deepEqual(LiveLoopStack.ReleaseEnv({ [N.ReleaseCredentialEnvVar]: 'C:/elsewhere.json' }, () => true), {})
         assert.deepEqual(LiveLoopStack.ReleaseEnv({ [N.ReleaseCredentialEnvVar]: '' }, () => true), { [N.ReleaseCredentialEnvVar]: N.ReleaseCredentialFile })
+    })
+})
+
+describe('LiveLoopStack.KindImages', () =>
+{
+    it('loads the env server, UI unpack and hive agent dev images, the registry and environment Postgres onto the kind node', () =>
+    {
+        assert.deepEqual(LiveLoopStack.KindImages(), ['pragmatic-server:dev', 'pragmatic-ui-unpack:dev', 'pragmatic-hive-agent:dev', 'registry:2', 'postgres:16'])
+    })
+
+    it('loads only images the stack bakes or pulls: every dev image among them is one of the live loop\'s baked images', () =>
+    {
+        const baked = DevImages.LiveLoopApps.map(app => DevImages.TagOf(app))
+        for (const image of LiveLoopStack.KindImages().filter(i => i.startsWith('pragmatic-')))
+        {
+            assert.ok(baked.includes(image), image)
+        }
+        // The tenant IdP is baked but runs in local docker (the console's Docker IdP), not on the node.
+        assert.ok(baked.includes(DevImages.TagOf(ReleaseApp.TenantIdp)))
+        assert.ok(!LiveLoopStack.KindImages().includes(DevImages.TagOf(ReleaseApp.TenantIdp)))
     })
 })
 

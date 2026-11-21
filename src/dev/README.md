@@ -15,13 +15,13 @@ role `admin`; the agent channel is the platform edge's (`pragmatic-platform-edge
 - **Tenant admin panel:** `https://acme.lvh.me` — a Caddy container terminates TLS on `:443` with the local
   dev CA and reverse-proxies to the tenant plane on `:7100`. `*.lvh.me` resolves to `127.0.0.1` via public DNS,
   so every tenant subdomain works with no hosts-file edits.
-- **Tenant IdP:** each tenant runs its own `pragmatic-idp` container (acme: `https://host.docker.internal:12100`), the
-  realm sign-in service, with a `postgres:17.12-trixie` companion on its network namespace (its own database; the
+- **Tenant IdP:** each tenant runs its own `pragmatic-idp` container (acme: `https://host.docker.internal:12100`) from
+  the `pragmatic-tenant-idp:dev` image, the realm sign-in service, with a `postgres:17.12-trixie` companion on its network namespace (its own database; the
   password and URL files live in the IdP's data volume; removing the IdP's volume removes the companion's too).
   Login redirects from the tenant panel land on it.
 - **Local hive:** `acme-hive` (`backend=local, mode=attach`) bound to tenant `acme`, on the dev kind cluster
-  `pragmatic-dev` (context `kind-pragmatic-dev`). `dev-up.sh` creates it when missing and loads `pragmatic-server:dev`, `pragmatic-ui-unpack:dev` (built in the pragmatic-ui-unpack repository),
-  `registry:2` and `postgres:16` onto its node on every run, so a rebuilt server image reaches the hive. It maps no host
+  `pragmatic-dev` (context `kind-pragmatic-dev`). `dev-up.sh` creates it when missing and loads the dev images (below),
+  `registry:2` and `postgres:16` onto its node on every run, so a rebuilt image reaches the hive. It maps no host
   port, so it runs beside Caddy and the live-loop e2e cluster. Docker Desktop's built-in Kubernetes is not used; you can
   turn it off. Manage the cluster on its own with `npx tsx src/dev/dev-cluster.ts up|down` from this repository (needs
   `kind` on PATH). A hive seeded before this change keeps its stored settings: one without a `configRef` now lands on
@@ -44,6 +44,24 @@ Coming from pragmatic-server: the stack used to keep these at `pragmatic-server/
 `~/.pragmatic/dev-stack/certs` once (or point `PRAGMATIC_DEV_DATA_ROOT` at the data folder) before the first
 `dev-up.sh`; the database volume is the same. Stop and restart anytime — state (and the IdP
 container + volume) persists. To start over, remove the container and `docker volume rm pragmatic-dev-postgres-data`.
+
+## Dev images
+
+The console runs each platform app from its own locally built image in local mode (pragmatic-platform-admin's
+`DevPlatformImages`): `pragmatic-server:dev` (the env server, the name the tenant plane gives every environment),
+`pragmatic-ui-unpack:dev`, `pragmatic-hive-agent:dev`, `pragmatic-tenant-admin:dev`, `pragmatic-tenant-idp:dev` and
+`pragmatic-postgres:local`. `dev-up.sh` bakes them first, each from its container repository's own `docker-bake.hcl`
+(two steps: `components`, then the image, `--load`ed under the dev tag), from the checkouts in
+`PRAGMATIC_E2E_REPOS_DIR`, so uncommitted edits are in the image. The bake reads packages with the `.npmrc`
+`PRAGMATIC_E2E_NPMRC` names (default `~/.npmrc`), as a BuildKit secret only. Bake them on their own, or only some:
+
+```bash
+npx tsx src/dev/dev-images.ts                                          # all six
+npx tsx src/dev/dev-images.ts pragmatic-env-server pragmatic-ui-unpack # only these
+```
+
+`PRAGMATIC_DEV_SKIP_IMAGE_BAKE=1 bash src/dev/dev-up.sh` skips the bake (the dev cluster then refuses a missing image,
+naming the command that bakes it).
 
 ## First-time setup (once)
 
@@ -108,7 +126,7 @@ imported by `trust-ca.ps1`) is not in your user store, so `dev-ca-trust.ps1 -Rem
 thumbprint with `dev-ca-trust.ps1 -CaFile <old ca.crt> -ShowThumbprint`, then remove it from an elevated PowerShell
 with `Remove-Item Cert:\LocalMachine\Root\<thumbprint>`.
 
-The server image (`pragmatic-server:dev`, built from pragmatic-env-server's `docker/Dockerfile`) can be rebuilt under the same tag. On the next tenant sign-in or environment action, the control
+The IdP image (`pragmatic-tenant-idp:dev`, see "Dev images") can be rebuilt under the same tag. On the next tenant sign-in or environment action, the control
 plane compares the image a healthy IdP container runs with the image the tag now names, and recreates a stale
 container on the current image, on the same port and identity volume. This signs out anyone signed in to that IdP,
 because its sessions are held in memory. If the new image cannot come up, the container is brought back on the

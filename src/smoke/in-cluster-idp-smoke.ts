@@ -1,8 +1,9 @@
 /**
  * GATED real-cluster smoke for the in-cluster per-tenant IdP apply. NOT part of `tsx --test`.
  *
- * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster) and the `pragmatic-server:dev` image
- * (which carries the `pragmatic-idpd` binary the IdP pod runs) in the local image store. Run with:
+ * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster) and the `pragmatic-tenant-idp:dev` image
+ * (which carries the `pragmatic-idpd` binary the IdP pod runs; `npx tsx src/dev/dev-images.ts pragmatic-tenant-idp`) on
+ * its node (`src/dev/dev-cluster.ts up`). Run with:
  *
  *   npx tsx src/smoke/in-cluster-idp-smoke.ts
  *
@@ -19,6 +20,8 @@ import { request } from 'node:https'
 import { fileURLToPath } from 'node:url'
 import { InClusterIdpDriver } from '../../repos/pragmatic-platform-admin/src/in-cluster-idp-driver.js'
 import { InClusterIdpSeedSource } from '../../repos/pragmatic-platform-admin/src/in-cluster-idp-seed.js'
+import { DevPlatformImages } from '../../repos/pragmatic-platform-admin/src/platform-images.js'
+import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { K8sManifestBuilder, IdpStatus, type IdpWorkloadResult } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity'
@@ -34,7 +37,7 @@ export class InClusterIdpSmoke
     private static readonly Context = SmokeCluster.Context()
     private static readonly HiveId = 'icc-hive'
     private static readonly TenantId = 'icc-idp'
-    private static readonly Image = 'pragmatic-server:dev'
+    private static readonly Image = DevPlatformImages.Of(ReleaseApp.TenantIdp)
     private static readonly Kubectl = 'kubectl'
     private static readonly ContextFlag = '--context'
     private static readonly NamespaceFlag = '-n'

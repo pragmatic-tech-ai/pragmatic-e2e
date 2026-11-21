@@ -1,9 +1,9 @@
 /**
  * GATED real-cluster smoke for the SP-HIVE-4 rollout PULL path. NOT part of `tsx --test`.
  *
- * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster), docker, and a
- * `pragmatic-server:dev` image built AFTER the pull agent landed (it must contain
- * `dist/bin/pragmatic-agentd.js`; rebuild with the invocation in pragmatic-env-server's docker/Dockerfile header). Run with:
+ * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster), docker, and the `pragmatic-server:dev` (the
+ * environment) and `pragmatic-hive-agent:dev` (the agent) images baked (`npx tsx src/dev/dev-images.ts pragmatic-env-server
+ * pragmatic-hive-agent`) and on the node (`src/dev/dev-cluster.ts up`). Run with:
  *
  *   npx tsx src/smoke/rollout-pull-smoke.ts
  *
@@ -23,12 +23,13 @@ import { AgentChannelHost } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { LocalAgentChannelBackend } from '../../repos/pragmatic-platform-admin/src/local-agent-channel-backend.js'
 import { BundleBuilder, EnvServerSeedSource, TemplateCatalog, EnvironmentPlacement, EnvironmentRegistry, EnvStatus, EnvType, Template, type EnvironmentRecord, type IContainerProbe, type EnvironmentWorkload, UnsupportedBackendError, type IHiveOrchestrator, K8sManifestBuilder, ManifestRegistry, HiveBackend, InfraMode, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { ClientRegistry } from '../../repos/pragmatic-platform-admin/src/client-registry.js'
+import { DevPlatformImages } from '../../repos/pragmatic-platform-admin/src/platform-images.js'
 import { GatingRegistry } from '../../repos/pragmatic-platform-admin/src/gating-record.js'
 import { HiveObservationRegistry } from '../../repos/pragmatic-platform-admin/src/hive-observation-record.js'
 import { PlatformHiveOrchestratorFactory } from '../../repos/pragmatic-platform-admin/src/platform-hive-orchestrator-factory.js'
 import { HiveRegistry } from '../../repos/pragmatic-platform-admin/src/hive-registry.js'
 import { DockerImageDigest } from '../../repos/pragmatic-platform-admin/src/image-digest.js'
-import { ImageSigner, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { ImageSigner, FileKeyStore, ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 import { PlatformDeploymentRegistry } from '../../repos/pragmatic-platform-admin/src/platform-deployment-registry.js'
 import { PlatformDirectory } from '../../repos/pragmatic-platform-admin/src/platform-directory.js'
@@ -297,7 +298,7 @@ export class RolloutPullSmoke
         // Remember whether the shared namespace was already there: cleanup deletes it only if this smoke created it.
         this.systemNamespacePreExisted = await this.NamespaceExists(S.SystemNamespace)
         this.applied = true
-        await kubectl.Apply(new K8sManifestBuilder().RenderHiveAgent(S.HiveId, channelUrl, S.TokenSecretName, K8sManifestBuilder.AgentImage))
+        await kubectl.Apply(new K8sManifestBuilder().RenderHiveAgent(S.HiveId, channelUrl, S.TokenSecretName, DevPlatformImages.Of(ReleaseApp.HiveAgent)))
         await kubectl.Apply(JSON.stringify({
             [S.ApiVersionKey]: S.SecretApiVersion,
             [S.KindKey]: S.SecretKind,

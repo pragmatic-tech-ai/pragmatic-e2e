@@ -1,8 +1,8 @@
 /**
  * GATED integration smoke for the control plane. NOT part of `tsx --test`.
  *
- * Requires Docker running and the `pragmatic-server:dev` image built (one-time build:
- * see admin/README.md). Run with:
+ * Requires Docker running and the `pragmatic-server:dev` image baked (`npx tsx src/dev/dev-images.ts
+ * pragmatic-env-server`; see src/dev/README.md, "Dev images"). Run with:
  *
  *   npx tsx src/smoke/control-plane-smoke.ts
  *

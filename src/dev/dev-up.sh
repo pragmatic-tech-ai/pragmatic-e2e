@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Brings up the durable local dev deployment from the sibling checkouts under PRAGMATIC_E2E_REPOS_DIR (default: the
 # folder pragmatic-e2e sits in), each with `npm ci` done: pragmatic-platform-admin (the console) and
-# pragmatic-tenant-admin (its tenant portal, built with `npm run build` in tenant-portal/):
+# pragmatic-tenant-admin (its tenant portal, built with `npm run build` in tenant-portal/); the dev images are baked from
+# the checkouts of pragmatic-env-server, -ui-unpack, -hive-agent, -tenant-admin, -tenant-idp and -postgres there:
+#   - the dev images the console runs in local mode (src/dev/dev-images.ts)
 #   - the dev kind cluster `pragmatic-dev` (context kind-pragmatic-dev) the local hive runs on
 #   - operator (platform admin) panel  : http://127.0.0.1:7000     (loopback)
 #   - tenant admin panel               : https://<tenant>.lvh.me   (Caddy :443 -> tenant plane :7100)
@@ -28,7 +30,12 @@ CERTS="$HOME/.pragmatic/dev-stack/certs"
 CERTS_WIN="$(cd "$CERTS" && pwd -W)"
 CADDYFILE_WIN="$(cd "$HERE" && pwd -W)/Caddyfile"
 
-# 0) The dev kind cluster `pragmatic-dev` the local hive runs on (created when missing; the images re-loaded each run).
+# 0) The dev images, each baked from its container repository under $REPOS (src/dev/dev-images.ts; warm bakes take
+#    seconds; PRAGMATIC_DEV_SKIP_IMAGE_BAKE=1 skips it), then the dev kind cluster `pragmatic-dev` the local hive runs on
+#    (created when missing; the images re-loaded each run).
+if [ "${PRAGMATIC_DEV_SKIP_IMAGE_BAKE:-}" != "1" ]; then
+	(cd "$E2E" && npx tsx src/dev/dev-images.ts)
+fi
 (cd "$E2E" && npx tsx src/dev/dev-cluster.ts up)
 
 # 1) Caddy TLS terminator on :443 -> tenant plane (host.docker.internal:7100).

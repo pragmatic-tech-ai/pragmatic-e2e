@@ -2,8 +2,10 @@
  * OPERATOR-RUN test stack for the Plexus runtime live-loop e2e (NOT a *.test.ts, never run by CI). It stands up what a
  * customer has, apart from the developer's own data:
  *
+ *   - the dev images it runs (env server, UI unpack, hive agent, tenant IdP) baked from their container repositories
+ *     (src/dev/dev-images.ts);
  *   - a kind cluster `pragmatic-e2e` (host ports 443 and the in-cluster registry's node port mapped, ingress-nginx with SSL
- *     passthrough, the server, registry and Postgres images loaded);
+ *     passthrough, the env server, UI unpack, hive agent, registry and Postgres images loaded);
  *   - both admin portals rebuilt (pragmatic-platform-admin's `portal`, pragmatic-tenant-admin's `tenant-portal`), since the
  *     console serves their `dist` folders;
  *   - the platform admin console (role `admin`) on :7000 (operator), :7100 (tenant plane) and :7002 (internal API, loopback),
@@ -22,8 +24,9 @@
  *
  * The services run from the sibling checkouts under PRAGMATIC_E2E_REPOS_DIR (default: the folder this repository sits in),
  * each with its own `npm ci` done: pragmatic-platform-admin, pragmatic-platform-edge and pragmatic-tenant-admin (for its
- * portal). Requires docker, kind and kubectl on PATH, FRESH `pragmatic-server:dev` (pragmatic-env-server's
- * `docker/Dockerfile`) and `pragmatic-ui-unpack:dev` (the pragmatic-ui-unpack repository) images, free host ports 443, 30500, 7000, 7001, 7002 and 7100, and the Playwright Chromium browser.
+ * portal); the images are baked from the checkouts of pragmatic-env-server, pragmatic-ui-unpack, pragmatic-hive-agent and
+ * pragmatic-tenant-idp there (with the .npmrc PRAGMATIC_E2E_NPMRC names, default ~/.npmrc). Requires docker with buildx,
+ * kind and kubectl on PATH, free host ports 443, 30500, 7000, 7001, 7002 and 7100, and the Playwright Chromium browser.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
@@ -31,10 +34,12 @@ import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } 
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { EnvironmentWorkloadFactory, InClusterRegistry, NetPortProbe } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { InClusterRegistry, NetPortProbe } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { RepositoryRoots } from '../stack/repository-roots.js'
+import { DevImages } from '../dev/dev-images.js'
 import { KindCli } from '../../repos/pragmatic-platform-admin/src/kind.js'
 import { NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
+import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { ProcessTree } from './process-tree.js'
 import { type IOperatorApi, OperatorApiClient } from './operator-api-client.js'
 import { TenantOwnerSession } from './tenant-owner-session.js'
@@ -383,7 +388,6 @@ export class LiveLoopStack
     private static readonly DownVerb = 'down'
     private static readonly UsageMessage = 'usage: live-loop-stack.ts up|down'
     private static readonly HttpsPort = 443
-    private static readonly ServerImage = 'pragmatic-server:dev'
     private static readonly PostgresImage = 'postgres:16'
     private static readonly Docker = 'docker'
     private static readonly Kubectl = 'kubectl'
@@ -471,6 +475,7 @@ export class LiveLoopStack
     private static readonly AlreadyUpMessage = 'the e2e stack is already up (stack.json exists); run down first'
     private static readonly NotReadyMessage = 'the control plane did not answer /api/ping in time; see the log in the stack folder'
     private static readonly Steps = {
+        Images: '[stack] dev images baked from their repositories (env server, UI unpack, hive agent, tenant IdP)',
         Cluster: '[stack] kind cluster pragmatic-e2e (443 + registry node port) and images',
         Ingress: '[stack] ingress-nginx with SSL passthrough',
         Portals: '[stack] admin portals rebuilt (platform admin, tenant admin)',
@@ -488,10 +493,19 @@ export class LiveLoopStack
     private readonly secrets: string[] = [LiveLoopStackNames.OperatorPassword]
     private readonly kind = new KindCli(new NodeExecFile(), new NodeExecFile(KindCli.ImageLoadTimeoutMs))
     private readonly services: LiveLoopServices
+    private readonly images: DevImages
 
     public constructor(roots: RepositoryRoots = RepositoryRoots.FromEnvironment(process.env))
     {
         this.services = new LiveLoopServices(roots)
+        this.images = new DevImages(roots, DevImages.NpmrcOf(process.env))
+    }
+
+    /** What up loads onto the kind node: the dev images the hive's pods run (the tenant IdP runs in local docker), the in-cluster registry and environment Postgres. */
+    public static KindImages(): readonly string[]
+    {
+        const environments = [DevImages.TagOf(ReleaseApp.EnvServer), DevImages.TagOf(ReleaseApp.UiUnpack), DevImages.TagOf(ReleaseApp.HiveAgent)]
+        return [...environments, InClusterRegistry.Image, LiveLoopStack.PostgresImage]
     }
 
     public static async Main(): Promise<void>
@@ -556,12 +570,15 @@ export class LiveLoopStack
         const dataRoot = join(N.StackDir, L.DataDirName)
         mkdirSync(dataRoot, { recursive: true })
 
+        console.log(L.Steps.Images)
+        await this.images.Build(DevImages.LiveLoopApps)
+
         console.log(L.Steps.Cluster)
         if (!(await this.kind.ListClusters()).includes(N.ClusterName))
         {
             await this.kind.CreateCluster(N.ClusterName, { extraPortMappings: [L.HttpsPort, InClusterRegistry.NodePort] })
         }
-        for (const image of [L.ServerImage, EnvironmentWorkloadFactory.UiUnpackImage, InClusterRegistry.Image, L.PostgresImage])
+        for (const image of L.KindImages())
         {
             await this.EnsureLocalImage(image)
             await this.kind.LoadImage(image, N.ClusterName)

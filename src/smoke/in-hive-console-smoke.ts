@@ -3,8 +3,9 @@
  * `tsx --test` / `npm test`, never executed by CI, excluded from the tenant-admin build by its `-smoke.ts` name.
  *
  * Requires: a control plane running from this checkout (operator API on --control-plane, agent channel on), hive
- * `default-pragmatic-hive` (tenant `pragmatic-default`) with its agent connected on that context, a FRESH
- * `pragmatic-server:dev` image in the host docker store (the smoke streams it into the cluster's node), an ingress answering on
+ * `default-pragmatic-hive` (tenant `pragmatic-default`) with its agent connected on that context, FRESH dev images of the
+ * tenant console, its IdP and Postgres and the env server in the host docker store (`npx tsx src/dev/dev-images.ts`; the
+ * smoke streams them into the cluster's node), an ingress answering on
  * 127.0.0.1:443 (the dev cluster maps no host port, since dev-up's Caddy holds :443: use a cluster created with a :443 mapping,
  * e.g. the live-loop stack's `kind-pragmatic-e2e`, or Docker Desktop's `docker-desktop`),
  * openssl on PATH, and the Playwright Chromium browser. Desktop discovery must answer, so the control plane needs a tenant-plane URL
@@ -37,6 +38,8 @@ import type { TLSSocket } from 'node:tls'
 import { fileURLToPath } from 'node:url'
 import { chromium, type Page } from 'playwright'
 import { IdpLoginPage } from '../../repos/pragmatic-platform-admin/src/idp-login-page.js'
+import { DevPlatformImages } from '../../repos/pragmatic-platform-admin/src/platform-images.js'
+import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { K8sManifestBuilder } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { KindImageLoader } from './kind-image-loader.js'
 import { KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
@@ -57,7 +60,8 @@ export class InHiveConsoleSmoke
     private static readonly DefaultHive = 'default-pragmatic-hive'
     private static readonly DefaultBaseDomain = 'localtest.me'
     private static readonly DefaultControlPlane = 'http://127.0.0.1:7000'
-    private static readonly Image = 'pragmatic-server:dev'
+    /** What the console install and the environment it creates run (the console's local-mode dev images). */
+    private static readonly Images: readonly string[] = [ReleaseApp.TenantAdmin, ReleaseApp.TenantIdp, ReleaseApp.Postgres, ReleaseApp.EnvServer].map(app => DevPlatformImages.Of(app))
     private static readonly EnvName = 'smoke-ihc'
     private static readonly EnvTemplate = 'dev-blank'
     private static readonly EnvType = 'development'
@@ -249,7 +253,7 @@ export class InHiveConsoleSmoke
         Preflight: 'preflight: pragmatic-system and the hive agent token Secret exist',
         Ingress: 'preflight: ingress-nginx installed by the smoke and rolled out',
         IngressPresent: 'preflight: IngressClass nginx already present (not installed by the smoke)',
-        Image: 'preflight: pragmatic-server:dev streamed into the smoke cluster node',
+        Image: 'preflight: the console, IdP, Postgres and env server dev images streamed into the smoke cluster node',
         Login: 'operator login returns 200 and a session cookie',
         Settings: 'PUT console settings (development TLS) returns 200',
         InstallStart: 'POST console-install returns 202',
@@ -392,7 +396,7 @@ export class InHiveConsoleSmoke
             this.Expect(S.Labels.IngressPresent, true)
         }
 
-        await new KindImageLoader(SmokeCluster.Node()).Load(S.Image)
+        await new KindImageLoader(SmokeCluster.Node()).Load(...S.Images)
         this.Expect(S.Labels.Image, true)
     }
 
