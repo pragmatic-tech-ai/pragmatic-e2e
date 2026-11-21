@@ -10,14 +10,16 @@
  *     console serves their `dist` folders;
  *   - the platform admin console (role `admin`) on :7000 (operator), :7100 (tenant plane) and :7002 (internal API, loopback),
  *     started from pragmatic-platform-admin's source, its state in ~/.pragmatic/e2e-stack/data;
+ *   - a TLS front for the tenant plane on loopback :7443 (https://e2e.lvh.me:7443, a development certificate), because the
+ *     tenant's realm sign-in service accepts a client redirect only over https (tenant-plane-tls-front.ts);
  *   - the platform edge on :7001 (agent channel), started from pragmatic-platform-edge's source, answering through the
  *     console's internal API (a shared secret in an owner-only file of the stack folder);
  *   - client `e2e-client`, tenant `e2e` (owner `o@t.io`, its IdP container) and hive `e2e-hive` attached to the kind cluster,
  *     with its agent installed (as the operator's install button does) and checked in;
  *   - one owner sign-in through the tenant plane, as the owner would; the one-time password stays the owner's.
  *
- * `up` writes ~/.pragmatic/e2e-stack/stack.json (addresses, emails, password FILE paths, the IdP CA file) for the live-loop
- * orchestrator and the Plexus spec; `down` stops the control plane, removes the IdP container and volume, deletes the kind
+ * `up` writes stack.json in the stack folder (~/.pragmatic/e2e-stack, or PRAGMATIC_E2E_STACK_DIR) with addresses, emails
+ * and password FILE paths relative to that folder, for the live-loop orchestrator and the Plexus spec; `down` stops the control plane, removes the IdP container and volume, deletes the kind
  * cluster and the stack folder. Passwords are written to files in the stack folder only: never printed or logged.
  *
  *   npx tsx src/live-loop/live-loop-stack.ts up|down
@@ -26,25 +28,35 @@
  * each with its own `npm ci` done: pragmatic-platform-admin, pragmatic-platform-edge and pragmatic-tenant-admin (for its
  * portal); the images are baked from the checkouts of pragmatic-env-server, pragmatic-ui-unpack, pragmatic-hive-agent and
  * pragmatic-tenant-idp there (with the .npmrc PRAGMATIC_E2E_NPMRC names, default ~/.npmrc). Requires docker with buildx,
- * kind and kubectl on PATH, free host ports 443, 30500, 7000, 7001, 7002 and 7100, and the Playwright Chromium browser.
+ * kind and kubectl on PATH, free host ports 443, 30500, 7000, 7001, 7002, 7100 and 7443, and the Playwright Chromium browser.
+ * On a plain Docker engine (WSL, Linux) `up` adds host.docker.internal to the cluster's CoreDNS (KindHostAlias); Docker
+ * Desktop answers that name itself.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { InClusterRegistry, NetPortProbe } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { RepositoryRoots } from '../stack/repository-roots.js'
 import { DevImages } from '../dev/dev-images.js'
 import { KindCli } from '../../repos/pragmatic-platform-admin/src/kind.js'
+import { IdpContainerEnv } from '../../repos/pragmatic-platform-admin/src/idp-container-env.js'
 import { NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { DevCa } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
+import { KindHostAlias } from './kind-host-alias.js'
+import { TenantPlaneTlsFront } from './tenant-plane-tls-front.js'
 import { ProcessTree } from './process-tree.js'
 import { type IOperatorApi, OperatorApiClient } from './operator-api-client.js'
 import { TenantOwnerSession } from './tenant-owner-session.js'
 
-/** What `up` hands the orchestrator and the Plexus spec; secrets are FILE paths, never values. */
+/**
+ * What `up` hands the orchestrator and the Plexus spec; secrets are FILE paths, never values. On disk every file path is
+ * relative to the descriptor's folder (forward slashes), so a reader on another OS view of the same folder (Windows reading
+ * what `up` wrote in WSL) resolves it; ReadDescriptor answers them absolute.
+ */
 export type LiveLoopStackDescriptor = {
     platformAddress: string
     tenantPlaneOrigin: string
@@ -85,12 +97,25 @@ export class LiveLoopStackNames
     public static readonly TenantBaseDomain = 'lvh.me'
     public static readonly PlatformAddress = 'http://localhost:7000'
     public static readonly OperatorBase = 'http://127.0.0.1:7000'
-    public static readonly TenantPlaneOrigin = 'http://e2e.lvh.me:7100'
-    public static readonly StackDir = join(homedir(), '.pragmatic', 'e2e-stack')
+    /** The tenant plane's browser origin: the TLS front (the realm sign-in service accepts only https redirects). */
+    public static readonly TenantPlaneTlsPort = 7443
+    public static readonly TenantHost = 'e2e.lvh.me'
+    public static readonly TenantPlaneOrigin = 'https://e2e.lvh.me:7443'
+    /** Where the stack keeps its state; a folder both sides read when the stack runs in WSL and Plexus on Windows. */
+    public static readonly StackDirEnvVar = 'PRAGMATIC_E2E_STACK_DIR'
+    public static readonly DefaultStackDir = join(homedir(), '.pragmatic', 'e2e-stack')
+    public static readonly StackDir = LiveLoopStackNames.StackDirOf(process.env)
     public static readonly DescriptorFile = 'stack.json'
     /** The developer's GHCR read credential (`{ username, token }`); when present, platform admin's release catalogue uses it. */
     public static readonly ReleaseCredentialFile = join(homedir(), '.pragmatic', 'ghcr-read.json')
     public static readonly ReleaseCredentialEnvVar = 'PRAGMATIC_RELEASE_CREDENTIAL_FILE'
+
+    /** The stack folder `env` names: PRAGMATIC_E2E_STACK_DIR (resolved) when set and not blank, else ~/.pragmatic/e2e-stack. */
+    public static StackDirOf(env: NodeJS.ProcessEnv): string
+    {
+        const raw = env[LiveLoopStackNames.StackDirEnvVar]?.trim() ?? ''
+        return raw === '' ? LiveLoopStackNames.DefaultStackDir : resolve(raw)
+    }
 }
 
 /** The operator's seed, as dev-seed.sh does it: client, tenant (its IdP comes up here) and the attached hive. Returns the owner's one-time password. */
@@ -314,7 +339,9 @@ export class LiveLoopServices
     public static readonly LoopbackBind = '127.0.0.1'
     public static readonly AnyBind = '0.0.0.0'
     private static readonly FalseValue = 'false'
-    private static readonly HttpScheme = 'http'
+    private static readonly HttpsScheme = 'https'
+    private static readonly TrueValue = 'true'
+    public static readonly TlsFrontScript = join('src', 'live-loop', 'tenant-plane-tls-front.ts')
 
     public constructor(private readonly roots: RepositoryRoots)
     {
@@ -352,8 +379,12 @@ export class LiveLoopServices
                 PRAGMATIC_INTERNAL_API_SECRET_FILE: internalSecretFile,
                 PRAGMATIC_TENANT_ADMIN_PORT: String(N.TenantPlanePort),
                 PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: N.TenantBaseDomain,
-                PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME: S.HttpScheme,
-                PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT: String(N.TenantPlanePort),
+                // Browsers reach the tenant plane through the TLS front: the realm sign-in service accepts only https redirects.
+                PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME: S.HttpsScheme,
+                PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT: String(N.TenantPlaneTlsPort),
+                // The front reports the browser's https in X-Forwarded-Proto (the Origin check compares scheme too); the
+                // tenant listener is loopback-only, so only this machine's processes can claim to be that proxy.
+                PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY: S.TrueValue,
                 PRAGMATIC_TENANT_PORTAL_DIR: join(this.roots.Of(S.TenantAdmin), S.TenantPortalDir, S.DistDir),
                 // The console does not listen on the agent channel (the edge does); it still names it in hive bundles.
                 PRAGMATIC_AGENT_CHANNEL_PORT: String(N.AgentChannelPort),
@@ -377,6 +408,25 @@ export class LiveLoopServices
                 PRAGMATIC_AGENT_CHANNEL_BIND: S.AnyBind,
                 PRAGMATIC_EDGE_ADMIN_URL: N.InternalApiBase,
                 PRAGMATIC_INTERNAL_API_SECRET_FILE: internalSecretFile,
+            },
+        }
+    }
+
+    /** The tenant plane's TLS front (this repository's script): https on loopback :7443 relayed to the console's :7100. */
+    public TlsFront(base: NodeJS.ProcessEnv, certFile: string, keyFile: string): LiveLoopServiceSpec
+    {
+        const S = LiveLoopServices
+        const N = LiveLoopStackNames
+        return {
+            script: S.TlsFrontScript,
+            cwd: RepositoryRoots.OwnRoot,
+            tsxCli: join(RepositoryRoots.OwnRoot, ...S.TsxCliRelative),
+            env: {
+                ...base,
+                [TenantPlaneTlsFront.PortEnvVar]: String(N.TenantPlaneTlsPort),
+                [TenantPlaneTlsFront.TargetPortEnvVar]: String(N.TenantPlanePort),
+                [TenantPlaneTlsFront.CertFileEnvVar]: certFile,
+                [TenantPlaneTlsFront.KeyFileEnvVar]: keyFile,
             },
         }
     }
@@ -442,13 +492,17 @@ export class LiveLoopStack
     private static readonly PublishFlag = '-p'
     private static readonly VolumeFlag = '-v'
     private static readonly RemoveVolumesFlag = '-v'
-    private static readonly IdpContainerPrefix = 'pragmatic-idp-'
     private static readonly IdpVolumePrefix = 'pragmatic-idp-data-'
     private static readonly DataDirName = 'data'
     private static readonly LogFileName = 'control-plane.log'
     private static readonly PidFileName = 'control-plane.pid'
     private static readonly EdgeLogFileName = 'edge.log'
     private static readonly EdgePidFileName = 'edge.pid'
+    private static readonly TlsFrontLogFileName = 'tls-front.log'
+    private static readonly TlsFrontPidFileName = 'tls-front.pid'
+    private static readonly TlsFrontDirName = 'tls-front'
+    private static readonly TlsFrontExitedMessage = 'the tenant plane TLS front exited during start; see tls-front.log in the stack folder, then run down'
+    private static readonly TlsFrontNotReadyMessage = 'the tenant plane TLS front did not listen in time; see tls-front.log in the stack folder, then run down'
     private static readonly InternalSecretFileName = 'internal-api-secret'
     private static readonly OwnerPasswordFileName = 'owner-password'
     private static readonly OperatorPasswordFileName = 'operator-password'
@@ -461,6 +515,9 @@ export class LiveLoopStack
     private static readonly PingDeadlineMs = 180_000
     private static readonly PollMs = 2_000
     private static readonly Utf8 = 'utf8'
+    private static readonly PortableSeparator = '/'
+    /** The descriptor's keys that hold file or folder paths. */
+    private static readonly FileKeys = ['ownerPasswordFile', 'operatorPasswordFile', 'idpCaFile', 'idpCertFile', 'dataRoot'] as const
     private static readonly GetVerb = 'get'
     private static readonly OutputFlag = '-o'
     private static readonly ArgsJsonPath = 'jsonpath={.spec.template.spec.containers[0].args}'
@@ -478,10 +535,12 @@ export class LiveLoopStack
         Images: '[stack] dev images baked from their repositories (env server, UI unpack, hive agent, tenant IdP)',
         Cluster: '[stack] kind cluster pragmatic-e2e (443 + registry node port) and images',
         Ingress: '[stack] ingress-nginx with SSL passthrough',
+        HostAlias: '[stack] pods reach this machine as host.docker.internal (CoreDNS entry for the kind network gateway; not Docker Desktop)',
         Portals: '[stack] admin portals rebuilt (platform admin, tenant admin)',
         Postgres: '[stack] the console Postgres on 127.0.0.1:55434 (container pragmatic-e2e-postgres)',
         ControlPlane: '[stack] platform admin console on :7000 / :7100, internal API :7002 (records in its Postgres, files in the stack folder)',
         Edge: '[stack] platform edge: agent channel :7001, answered through the internal API of the console',
+        TlsFront: '[stack] tenant plane TLS front: https://e2e.lvh.me:7443 relayed to :7100 (development certificate in the stack folder)',
         Seed: '[stack] operator seed: client, tenant e2e (IdP), hive e2e-hive',
         Agent: '[stack] hive agent install; the hive checks in over the agent channel on :7001',
         Owner: '[stack] owner sign-in and short test password',
@@ -562,9 +621,27 @@ export class LiveLoopStack
         return join(LiveLoopStackNames.StackDir, LiveLoopStackNames.DescriptorFile)
     }
 
+    /** The descriptor at `path` with its file paths absolute, resolved against that file's folder (absolute ones stay). */
     public static ReadDescriptor(path: string = LiveLoopStack.DescriptorPath()): LiveLoopStackDescriptor
     {
-        return JSON.parse(readFileSync(path, LiveLoopStack.Utf8)) as LiveLoopStackDescriptor
+        const stored = JSON.parse(readFileSync(path, LiveLoopStack.Utf8)) as LiveLoopStackDescriptor
+        return LiveLoopStack.MapFiles(stored, file => resolve(dirname(path), file))
+    }
+
+    /** Pure: the descriptor as written, every file path relative to `stackDir` with forward slashes. */
+    public static Portable(descriptor: LiveLoopStackDescriptor, stackDir: string): LiveLoopStackDescriptor
+    {
+        return LiveLoopStack.MapFiles(descriptor, file => relative(stackDir, file).split(sep).join(LiveLoopStack.PortableSeparator))
+    }
+
+    private static MapFiles(descriptor: LiveLoopStackDescriptor, map: (file: string) => string): LiveLoopStackDescriptor
+    {
+        const out = { ...descriptor }
+        for (const key of LiveLoopStack.FileKeys)
+        {
+            out[key] = map(descriptor[key])
+        }
+        return out
     }
 
     public async Up(): Promise<void>
@@ -603,6 +680,11 @@ export class LiveLoopStack
         await this.Kubectl([L.RolloutVerb, L.StatusVerb, L.DeploymentPrefix + L.IngressDeployment, L.NamespaceFlag, L.IngressNamespace, L.WaitTimeout])
         await this.Kubectl([L.WaitVerb, L.NamespaceFlag, L.IngressNamespace, L.ReadyCondition, L.PodKind, L.SelectorFlag + L.ControllerSelector, L.WaitTimeout])
 
+        if (await new KindHostAlias(N.KubeContext).Ensure())
+        {
+            console.log(L.Steps.HostAlias)
+        }
+
         console.log(L.Steps.Portals)
         await new LiveLoopPortalBuild().Build(this.services.PortalDirs())
 
@@ -616,6 +698,10 @@ export class LiveLoopStack
         await this.WaitForPing(this.StartService(this.services.Console(process.env, dataRoot, databaseUrlFile, internalSecretFile), L.LogFileName, L.PidFileName))
         console.log(L.Steps.Edge)
         await this.WaitForEdge(this.StartService(this.services.Edge(process.env, internalSecretFile), L.EdgeLogFileName, L.EdgePidFileName))
+        console.log(L.Steps.TlsFront)
+        const front = DevCa.EnsureAt(join(N.StackDir, L.TlsFrontDirName), N.TenantHost)
+        await this.WaitForPort(this.StartService(this.services.TlsFront(process.env, front.certFile, front.keyFile), L.TlsFrontLogFileName, L.TlsFrontPidFileName),
+            N.TenantPlaneTlsPort, L.TlsFrontExitedMessage, L.TlsFrontNotReadyMessage)
 
         console.log(L.Steps.Seed)
         const api = new OperatorApiClient(N.OperatorBase)
@@ -649,11 +735,30 @@ export class LiveLoopStack
             idpLogin: L.BrowserLogin,
             dataRoot,
         }
-        writeFileSync(L.DescriptorPath(), JSON.stringify(descriptor, null, 2), L.Utf8)
+        writeFileSync(L.DescriptorPath(), JSON.stringify(L.Portable(descriptor, N.StackDir), null, 2), L.Utf8)
         console.log(L.Steps.Done + L.DescriptorPath())
     }
 
     /** Best effort, every step on its own: stop the edge and the console, remove the IdP container + volume, delete the cluster and the folder. */
+    /**
+     * The docker commands down runs, in order: the console's Postgres (with its anonymous volume), the tenant IdP's companion
+     * Postgres before the IdP (it lives in the IdP's network namespace and mounts the IdP's data volume), then both volumes.
+     * Names come from the console's own IdP driver, so they cannot drift from what it created.
+     */
+    public static DownDockerSteps(): readonly (readonly string[])[]
+    {
+        const L = LiveLoopStack
+        const idp = IdpContainerEnv.ContainerName(LiveLoopStackNames.TenantId)
+        const volume = L.IdpVolumePrefix + LiveLoopStackNames.TenantId
+        return [
+            [L.RmVerb, L.ForceFlag, L.RemoveVolumesFlag, L.ConsolePostgresContainer],
+            [L.RmVerb, L.ForceFlag, IdpContainerEnv.PostgresContainerName(idp)],
+            [L.RmVerb, L.ForceFlag, idp],
+            [L.VolumeVerb, L.RmVerb, L.ForceFlag, IdpContainerEnv.PostgresVolumeName(volume)],
+            [L.VolumeVerb, L.RmVerb, L.ForceFlag, volume],
+        ]
+    }
+
     public async Down(): Promise<void>
     {
         const L = LiveLoopStack
@@ -663,9 +768,10 @@ export class LiveLoopStack
         {
             await this.StopService(stop)
         }
-        await this.BestEffort(() => this.exec.Run(L.Docker, [L.RmVerb, L.ForceFlag, L.RemoveVolumesFlag, L.ConsolePostgresContainer]))
-        await this.BestEffort(() => this.exec.Run(L.Docker, [L.RmVerb, L.ForceFlag, L.IdpContainerPrefix + N.TenantId]))
-        await this.BestEffort(() => this.exec.Run(L.Docker, [L.VolumeVerb, L.RmVerb, L.ForceFlag, L.IdpVolumePrefix + N.TenantId]))
+        for (const args of L.DownDockerSteps())
+        {
+            await this.BestEffort(() => this.exec.Run(L.Docker, args))
+        }
         await this.BestEffort(() => this.kind.DeleteCluster(N.ClusterName))
         await this.BestEffort(async () => rmSync(N.StackDir, { recursive: true, force: true }))
     }
@@ -732,12 +838,16 @@ export class LiveLoopStack
         return child
     }
 
-    /** What down stops, in order: the edge first (it answers through the console), then the console. */
+    /**
+     * What down stops, in order: the TLS front and the edge first (both relay to the console), then the console. The front's
+     * development certificate is trusted by nobody, so it is recognised by the port it holds.
+     */
     public static StopPlan(): readonly LiveLoopServiceStop[]
     {
         const L = LiveLoopStack
         const N = LiveLoopStackNames
         return [
+            { pidFile: join(N.StackDir, L.TlsFrontPidFileName), url: N.TenantPlaneOrigin, port: N.TenantPlaneTlsPort },
             { pidFile: join(N.StackDir, L.EdgePidFileName), url: N.EdgeBase + L.HealthzPath, port: N.AgentChannelPort },
             { pidFile: join(N.StackDir, L.PidFileName), url: N.OperatorBase + L.PingPath, port: N.OperatorPort },
         ]
@@ -762,7 +872,7 @@ export class LiveLoopStack
         const L = LiveLoopStack
         const probe = new NetPortProbe()
         const N = LiveLoopStackNames
-        for (const port of [N.OperatorPort, N.TenantPlanePort, N.AgentChannelPort, N.InternalApiPort])
+        for (const port of [N.OperatorPort, N.TenantPlanePort, N.TenantPlaneTlsPort, N.AgentChannelPort, N.InternalApiPort])
         {
             if (!await probe.Free(port))
             {
@@ -791,6 +901,27 @@ export class LiveLoopStack
     {
         const L = LiveLoopStack
         await this.WaitFor(child, LiveLoopStackNames.OperatorBase + L.PingPath, L.ExitedMessage, L.NotReadyMessage)
+    }
+
+    /** Waits for OUR process to hold `port` (the TLS front, whose certificate nothing here trusts); an exited child fails at once. */
+    private async WaitForPort(child: ChildProcess, port: number, exitedMessage: string, notReadyMessage: string): Promise<void>
+    {
+        const L = LiveLoopStack
+        const probe = new NetPortProbe()
+        const deadline = Date.now() + L.PingDeadlineMs
+        while (Date.now() < deadline)
+        {
+            if (child.exitCode !== null)
+            {
+                throw new Error(exitedMessage)
+            }
+            if (!await probe.Free(port))
+            {
+                return
+            }
+            await new Promise<void>(r => setTimeout(r, L.PollMs))
+        }
+        throw new Error(notReadyMessage)
     }
 
     /** Waits for OUR edge the same way, on its /healthz. */

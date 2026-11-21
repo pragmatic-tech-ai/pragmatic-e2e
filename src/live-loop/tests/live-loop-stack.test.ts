@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { LiveLoopPortalBuild, LiveLoopServices, LiveLoopStack, LiveLoopStackAgent, LiveLoopStackNames, LiveLoopStackSeed, type IPortalBuildRunner } from '../live-loop-stack.js'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { LiveLoopPortalBuild, LiveLoopServices, LiveLoopStack, LiveLoopStackAgent, LiveLoopStackNames, LiveLoopStackSeed, type IPortalBuildRunner, type LiveLoopStackDescriptor } from '../live-loop-stack.js'
 import { RepositoryMissingError, RepositoryRoots } from '../../stack/repository-roots.js'
 import type { ApiAnswer, IOperatorApi } from '../operator-api-client.js'
 import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
@@ -236,6 +236,36 @@ describe('LiveLoopServices', () =>
         })
     })
 
+    it('gives the tenant plane an https browser origin on the TLS front\'s port (the realm sign-in accepts only https redirects)', () =>
+    {
+        ServicesFx.With((_dir, services) =>
+        {
+            const spec = services.Console({}, ServicesFx.DataRoot, ServicesFx.UrlFile, ServicesFx.SecretFile)
+            assert.equal(spec.env.PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME, 'https')
+            assert.equal(spec.env.PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT, String(N.TenantPlaneTlsPort))
+            assert.equal(spec.env.PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY, 'true')
+            assert.equal(N.TenantPlaneOrigin, 'https://' + N.TenantHost + ':' + String(N.TenantPlaneTlsPort))
+        })
+    })
+
+    it('starts the TLS front from this repository with its own tsx, relaying the front port to the tenant plane', () =>
+    {
+        ServicesFx.With((_dir, services) =>
+        {
+            const spec = services.TlsFront({ KEEP: 'me' }, '/s/server.crt', '/s/server.key')
+            assert.equal(spec.cwd, RepositoryRoots.OwnRoot)
+            assert.equal(spec.script, join('src', 'live-loop', 'tenant-plane-tls-front.ts'))
+            assert.equal(spec.tsxCli, join(RepositoryRoots.OwnRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs'))
+            assert.deepEqual(spec.env, {
+                KEEP: 'me',
+                PRAGMATIC_E2E_TLS_FRONT_PORT: String(N.TenantPlaneTlsPort),
+                PRAGMATIC_E2E_TLS_FRONT_TARGET_PORT: String(N.TenantPlanePort),
+                PRAGMATIC_E2E_TLS_FRONT_CERT_FILE: '/s/server.crt',
+                PRAGMATIC_E2E_TLS_FRONT_KEY_FILE: '/s/server.key',
+            })
+        })
+    })
+
     it('starts the edge from pragmatic-platform-edge on the agent channel, answered through the console\'s internal API', () =>
     {
         ServicesFx.With((dir, services) =>
@@ -326,10 +356,11 @@ describe('LiveLoopStack.ImagesToBake', () =>
 
 describe('LiveLoopStack.StopPlan', () =>
 {
-    it('stops the edge first, then the console, each by its pid file, health URL and port', () =>
+    it('stops the TLS front and the edge first, then the console, each by its pid file, health URL and port', () =>
     {
         const N = LiveLoopStackNames
         assert.deepEqual(LiveLoopStack.StopPlan(), [
+            { pidFile: join(N.StackDir, 'tls-front.pid'), url: 'https://e2e.lvh.me:7443', port: N.TenantPlaneTlsPort },
             { pidFile: join(N.StackDir, 'edge.pid'), url: 'http://127.0.0.1:7001/healthz', port: N.AgentChannelPort },
             { pidFile: join(N.StackDir, 'control-plane.pid'), url: 'http://127.0.0.1:7000/api/ping', port: N.OperatorPort },
         ])
@@ -342,5 +373,96 @@ describe('LiveLoopStack.Redact', () =>
     {
         const out = new LiveLoopStack().Redact('login failed for ' + LiveLoopStackNames.OperatorPassword)
         assert.equal(out, 'login failed for ***')
+    })
+})
+
+describe('LiveLoopStackNames.StackDirOf', () =>
+{
+    it('keeps the stack in ~/.pragmatic/e2e-stack by default, and a blank PRAGMATIC_E2E_STACK_DIR counts as unset', () =>
+    {
+        const home = join(homedir(), '.pragmatic', 'e2e-stack')
+        assert.equal(LiveLoopStackNames.StackDirOf({}), home)
+        assert.equal(LiveLoopStackNames.StackDirOf({ PRAGMATIC_E2E_STACK_DIR: '  ' }), home)
+    })
+
+    it('moves it to PRAGMATIC_E2E_STACK_DIR (resolved), e.g. a folder both WSL and Windows read', () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'stack-dir-'))
+        try
+        {
+            assert.equal(LiveLoopStackNames.StackDirOf({ PRAGMATIC_E2E_STACK_DIR: dir }), resolve(dir))
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
+})
+
+describe('LiveLoopStack descriptor files', () =>
+{
+    const absolute = (dir: string): LiveLoopStackDescriptor => ({
+        platformAddress: 'http://localhost:7000', tenantPlaneOrigin: 'http://e2e.lvh.me:7100', tenant: 'e2e', hive: 'e2e-hive',
+        kubeContext: 'kind-pragmatic-e2e', ownerEmail: 'o@t.io', ownerPasswordFile: join(dir, 'owner-password'),
+        operatorEmail: 'op@t.io', operatorPasswordFile: join(dir, 'operator-password'),
+        idpCaFile: join(dir, 'data', 'idp', 'e2e', 'tls', 'ca.crt'), idpCertFile: join(dir, 'data', 'idp', 'e2e', 'tls', 'server.crt'),
+        idpLogin: 'browser', dataRoot: join(dir, 'data'),
+    })
+
+    it('writes every file path relative to the stack folder with forward slashes, so Windows and WSL readers both resolve it', () =>
+    {
+        const dir = join(tmpdir(), 'stack')
+        const portable = LiveLoopStack.Portable(absolute(dir), dir)
+        assert.equal(portable.ownerPasswordFile, 'owner-password')
+        assert.equal(portable.operatorPasswordFile, 'operator-password')
+        assert.equal(portable.idpCaFile, 'data/idp/e2e/tls/ca.crt')
+        assert.equal(portable.idpCertFile, 'data/idp/e2e/tls/server.crt')
+        assert.equal(portable.dataRoot, 'data')
+        assert.equal(portable.platformAddress, 'http://localhost:7000')
+    })
+
+    it('reads a written descriptor back with absolute paths beside the file it was read from', () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'stack-read-'))
+        try
+        {
+            const file = join(dir, 'stack.json')
+            writeFileSync(file, JSON.stringify(LiveLoopStack.Portable(absolute('/elsewhere'), '/elsewhere')))
+            assert.deepEqual(LiveLoopStack.ReadDescriptor(file), absolute(dir))
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
+
+    it('still reads an older descriptor whose paths are absolute', () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'stack-old-'))
+        try
+        {
+            const file = join(dir, 'stack.json')
+            const old = absolute(join(tmpdir(), 'other-stack'))
+            writeFileSync(file, JSON.stringify(old))
+            assert.deepEqual(LiveLoopStack.ReadDescriptor(file), old)
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
+})
+
+describe('LiveLoopStack.DownDockerSteps', () =>
+{
+    it('removes the console Postgres, the IdP companion Postgres before the IdP, then both IdP volumes', () =>
+    {
+        assert.deepEqual(LiveLoopStack.DownDockerSteps(), [
+            ['rm', '-f', '-v', 'pragmatic-e2e-postgres'],
+            ['rm', '-f', 'pragmatic-idp-e2e-postgres'],
+            ['rm', '-f', 'pragmatic-idp-e2e'],
+            ['volume', 'rm', '-f', 'pragmatic-idp-data-e2e-pgdata'],
+            ['volume', 'rm', '-f', 'pragmatic-idp-data-e2e'],
+        ])
     })
 })

@@ -53,6 +53,20 @@ siblings` here first: the builder reads the image names from the pinned pragmati
 Plexus's e2e spawns `src/live-loop/loop-orchestrator.ts` from `PRAGMATIC_E2E_REPO` (default: the `pragmatic-e2e`
 checkout beside Plexus), so this repository needs `npm ci` and `npm run siblings` done there.
 
+`stack.json` lives in the stack folder (`~/.pragmatic/e2e-stack`, or `PRAGMATIC_E2E_STACK_DIR`) and names its files relative
+to that folder, so one descriptor reads from Windows and from WSL. On a plain Docker engine (WSL, Linux) `up` makes
+`host.docker.internal` resolve in the cluster's pods (a CoreDNS entry for the kind network gateway); the host itself needs
+`host.docker.internal` → `127.0.0.1` in its hosts file, as Docker Desktop installs write it.
+
+### On the hive laptop
+
+Docker, kind and kubectl live in the laptop's WSL distro, so the stack and the orchestrator run there (dev-kit
+`hive.cmd run --wsl`), Plexus's spec on Windows. The stack folder is the Windows profile's (`--env
+PRAGMATIC_E2E_STACK_DIR=/mnt/c/Users/visor/.pragmatic/e2e-stack` for `up` and `down`), and Plexus is told
+`PLEXUS_E2E_STACK=C:\Users\visor\.pragmatic\e2e-stack\stack.json`, `PRAGMATIC_E2E_WSL_DISTRO=hive` and
+`PRAGMATIC_E2E_REPO=/root/work/architecture-agent/pragmatic-e2e`. The full command list is in dev-kit
+`docs/superpowers/plans/2026-11-21-hive-laptop-live-loop.md`.
+
 ## License
 
 Apache-2.0.
