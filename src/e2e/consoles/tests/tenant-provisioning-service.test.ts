@@ -1,0 +1,524 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import type { IdpRealmSet } from '../../../src/idp/idp-realm-set.js';
+import { TenantIdpTestHost } from '../../../src/idp/tests/tenant-idp-test-host.js';
+import { IdpAdminClient, type IIdpService, type IOwnerSessionRevoker, type TenantRecord, IdpAdminTransportError, TenantAccountIndex, TenantIdpMode, TenantSessionClaims, TenantSessions, TenantPrincipalSessions } from '@pragmatic-tech-ai/pragmatic-tenant-plane';
+import type { IdpConnection } from '../idp-service.js';
+import { ClientRegistry } from '../client-registry.js';
+import { TenantRegistry } from '../tenant-registry.js';
+import { HiveRegistry } from '../hive-registry.js';
+import { PlatformDirectory, RecordExistsError, UnknownClientError, UnknownTenantError } from '../platform-directory.js';
+import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, OwnerResetInProgressError, TenantIdpMissingError, TenantProvisioningService, type TenantProvisionResult } from '../tenant-provisioning-service.js';
+import { SignedInIdentity } from '@pragmatic-tech-ai/pragmatic-app-host';
+
+class FakeIdp implements IIdpService
+{
+    // Whether the tenant has an IdP record to connect to (ConnectForTenant).
+    public HasRecord = true
+
+    public constructor(private readonly conn: IdpConnection | Error)
+    {
+    }
+
+    public async ConnectForTenant(_tenantId: string): Promise<IdpConnection | undefined>
+    {
+        return this.HasRecord && !(this.conn instanceof Error) ? this.conn : undefined;
+    }
+
+    public async TeardownForTenant(_tenantId: string): Promise<void>
+    {
+    }
+
+    public async EnsureForTenant(_tenantId: string, _displayName: string): Promise<IdpConnection>
+    {
+        if (this.conn instanceof Error)
+        {
+            throw this.conn;
+        }
+        return this.conn;
+    }
+}
+
+class SpyAdminClient extends IdpAdminClient
+{
+    public constructor(conn: IdpConnection, private readonly seen: string[])
+    {
+        super(conn);
+    }
+
+    // Skips the realm call so a bad token fails at SeedAccount, the step that carries the password.
+    public override async EnsureRealm(_tenantId: string, _displayName: string): Promise<void>
+    {
+    }
+
+    public override async SeedAccount(tenantId: string, account: Parameters<IdpAdminClient['SeedAccount']>[1]): Promise<void>
+    {
+        this.seen.push(account.password);
+        return super.SeedAccount(tenantId, account);
+    }
+}
+
+class ProvFixture
+{
+    public static readonly DirPrefix = 'tenant-prov-';
+    public static readonly KeyFile = 'idp-signing.pem';
+    public static readonly CaDir = 'ca';
+    public static readonly RealmsDir = 'realms';
+    public static readonly ClientsFile = 'clients.json';
+    public static readonly TenantsFile = 'tenants.json';
+    public static readonly HivesFile = 'hives.json';
+    public static readonly Localhost = 'localhost';
+    public static readonly Loopback = '127.0.0.1';
+    public static readonly BaseUrl = 'https://localhost';
+    public static readonly Utf8 = 'utf8';
+    public static readonly Token = TenantIdpTestHost.AdminToken;
+    public static readonly TokenRef = 'admin-token';
+    public static readonly CaRef = '/data/idp/tenant-1/tls';
+    public static readonly BadClientId = 'no-such-client';
+    public static readonly BadToken = 'wrong-prov-token';
+    public static readonly TenantId = 'tenant-1';
+    public static readonly ClientId = 'client-1';
+    public static readonly ClientName = 'Client One';
+    public static readonly DisplayName = 'Tenant One';
+    public static readonly OwnerEmail = 'owner@example.test';
+    public static readonly OwnerPrincipal = 'owner';
+    public static readonly HttpsScheme = 'https://';
+    public static readonly Colon = ':';
+    public static readonly PemMarker = 'BEGIN CERTIFICATE';
+    public static readonly LaunchFailed = 'launch failed';
+    public static readonly UnknownId = 'nope';
+    public static readonly WrongSuffix = 'x';
+    public static readonly MinPasswordLength = 24;
+
+    public static async WithHost(body: (conn: IdpConnection, realms: IdpRealmSet, directory: PlatformDirectory) => Promise<void>): Promise<void>
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), ProvFixture.DirPrefix));
+        const host = await TenantIdpTestHost.Start();
+        const realms = host.Service.Realms;
+        try
+        {
+            const conn: IdpConnection = {
+                baseUrl: host.BaseUrl,
+                browserBaseUrl: host.BaseUrl,
+                ca: Buffer.from(host.Ca),
+                adminToken: ProvFixture.Token,
+                adminTokenRef: ProvFixture.TokenRef,
+                caDir: ProvFixture.CaRef
+            };
+            const directory = new PlatformDirectory(
+                new ClientRegistry(path.join(dir, ProvFixture.ClientsFile)),
+                new TenantRegistry(path.join(dir, ProvFixture.TenantsFile)),
+                new HiveRegistry(path.join(dir, ProvFixture.HivesFile)),
+                { List: () => [] });
+            await directory.Load();
+            await directory.CreateClient({ id: ProvFixture.ClientId, displayName: ProvFixture.ClientName });
+            await body(conn, realms, directory);
+        }
+        finally
+        {
+            await host.Close();
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    }
+
+    /** A Central-mode result, whose one-time Owner password is always present. */
+    public static Central(result: TenantProvisionResult): { record: TenantRecord; ownerPassword: string }
+    {
+        assert.ok(result.ownerPassword !== undefined);
+        return { record: result.record, ownerPassword: result.ownerPassword };
+    }
+
+    public static Input(): { id: string; clientId: string; displayName: string; ownerEmail: string }
+    {
+        return { id: ProvFixture.TenantId, clientId: ProvFixture.ClientId, displayName: ProvFixture.DisplayName, ownerEmail: ProvFixture.OwnerEmail };
+    }
+
+    public static Service(conn: IdpConnection, directory: PlatformDirectory): TenantProvisioningService
+    {
+        return new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c));
+    }
+}
+
+test('Provision records the Owner in the account index, and ForgetTenant removes it', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), ProvFixture.DirPrefix));
+        try
+        {
+            const index = new TenantAccountIndex(path.join(dir, 'tenant-accounts.json'));
+            await index.Load();
+            const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), undefined, index);
+            await service.Provision(ProvFixture.Input());
+            assert.deepEqual(index.TenantsFor(ProvFixture.OwnerEmail.toUpperCase()), [ProvFixture.TenantId]);
+            await service.ForgetTenant(ProvFixture.TenantId);
+            assert.deepEqual(index.TenantsFor(ProvFixture.OwnerEmail), []);
+        }
+        finally
+        {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+test('ForgetTenant closes every connection of the tenant (its stored sessions are refused by the gates once it is gone)', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        const sessions = new TenantSessions(TenantSessions.InMemory(), false);
+        const principals = new TenantPrincipalSessions(sessions.Store);
+        const closedTenants: string[] = [];
+        principals.Attach({ ClosePrincipal: () => 0, CloseTenant: (t: string) => { closedTenants.push(t); return 1; } });
+        const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), principals);
+        await service.ForgetTenant(ProvFixture.TenantId);
+        assert.deepEqual(closedTenants, [ProvFixture.TenantId]);
+    });
+});
+
+test('ForgetTenant does not fail when ending the sessions fails', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        const failing: IOwnerSessionRevoker = { RevokeAllFor: async () => undefined, RevokeTenant: async () => { throw new Error('disk full'); } };
+        const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), failing);
+        await service.ForgetTenant(ProvFixture.TenantId);
+    });
+});
+
+test('ForgetTenant does not fail when the index write fails', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        const failing = { ForgetTenant: async () => { throw new Error('disk full'); } } as unknown as TenantAccountIndex;
+        const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), undefined, failing);
+        await service.ForgetTenant(ProvFixture.TenantId);
+    });
+});
+
+test('Provision ensures the realm, seeds an Owner who can authenticate, and persists non-secret metadata', async () =>
+{
+    await ProvFixture.WithHost(async (conn, realms, directory) =>
+    {
+        const { record, ownerPassword } = ProvFixture.Central(await ProvFixture.Service(conn, directory).Provision(ProvFixture.Input()));
+        assert.ok(ownerPassword.length >= ProvFixture.MinPasswordLength);
+        const realm = realms.For(ProvFixture.TenantId);
+        assert.ok(realm !== undefined);
+        assert.ok(await realm.AuthenticatePassword(ProvFixture.OwnerEmail, ownerPassword) !== undefined);
+        assert.equal(await realm.AuthenticatePassword(ProvFixture.OwnerEmail, ownerPassword + ProvFixture.WrongSuffix), undefined);
+        assert.equal(record.ownerEmail, ProvFixture.OwnerEmail);
+        assert.equal(record.ownerPrincipalId, ProvFixture.OwnerPrincipal);
+        assert.equal(record.idpBaseUrl, conn.baseUrl);
+        assert.equal(record.idpAdminTokenRef, ProvFixture.TokenRef);
+        assert.equal(record.idpCaRef, ProvFixture.CaRef);
+        assert.deepEqual(directory.GetTenant(ProvFixture.TenantId), record);
+    });
+});
+
+test('the persisted record never contains the password, the admin token, or the CA', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        const { record, ownerPassword } = ProvFixture.Central(await ProvFixture.Service(conn, directory).Provision(ProvFixture.Input()));
+        const text = JSON.stringify(record) + JSON.stringify(directory.GetTenant(ProvFixture.TenantId));
+        assert.ok(!text.includes(ownerPassword));
+        assert.ok(!text.includes(ProvFixture.Token));
+        assert.ok(!text.includes(ProvFixture.PemMarker));
+    });
+});
+
+test('failures do not leak secrets and leave no tenant record behind', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        const bad: IdpConnection = { ...conn, adminToken: ProvFixture.BadToken };
+        const seen: string[] = [];
+        const spying = new TenantProvisioningService(new FakeIdp(bad), directory, c => new SpyAdminClient(c, seen));
+        await assert.rejects(spying.Provision(ProvFixture.Input()), (err: unknown) =>
+        {
+            const text = String(err) + (err as Error).message + ((err as Error).stack ?? '');
+            assert.ok(!text.includes(ProvFixture.BadToken));
+            assert.ok(!text.includes(ProvFixture.Token));
+            assert.ok(seen.length > 0);
+            for (const pw of seen)
+            {
+                assert.ok(!text.includes(pw));
+            }
+            return true;
+        });
+        assert.equal(directory.GetTenant(ProvFixture.TenantId), undefined);
+
+        const failing = new TenantProvisioningService(new FakeIdp(new Error(ProvFixture.LaunchFailed)), directory, c => new IdpAdminClient(c));
+        await assert.rejects(failing.Provision(ProvFixture.Input()), new RegExp(ProvFixture.LaunchFailed));
+        assert.equal(directory.GetTenant(ProvFixture.TenantId), undefined);
+    });
+});
+
+test('Provision fails fast, before any IdP mutation, for an unknown client or a duplicate tenant', async () =>
+{
+    await ProvFixture.WithHost(async (conn, realms, directory) =>
+    {
+        const service = ProvFixture.Service(conn, directory);
+        await assert.rejects(service.Provision({ ...ProvFixture.Input(), clientId: ProvFixture.BadClientId }), UnknownClientError);
+        assert.equal(realms.For(ProvFixture.TenantId), undefined);
+        await directory.CreateTenant({ id: ProvFixture.TenantId, clientId: ProvFixture.ClientId, displayName: ProvFixture.DisplayName });
+        await assert.rejects(service.Provision(ProvFixture.Input()), RecordExistsError);
+        assert.equal(realms.For(ProvFixture.TenantId), undefined);
+    });
+});
+
+test('re-provisioning is rejected cleanly by the directory and the original password keeps working', async () =>
+{
+    await ProvFixture.WithHost(async (conn, realms, directory) =>
+    {
+        const service = ProvFixture.Service(conn, directory);
+        const first = ProvFixture.Central(await service.Provision(ProvFixture.Input()));
+        await assert.rejects(service.Provision(ProvFixture.Input()), (err: unknown) =>
+        {
+            assert.ok(err instanceof RecordExistsError);
+            assert.ok(!String(err).includes(first.ownerPassword));
+            return true;
+        });
+        const realm = realms.For(ProvFixture.TenantId);
+        assert.ok(realm !== undefined);
+        assert.ok(await realm.AuthenticatePassword(ProvFixture.OwnerEmail, first.ownerPassword) !== undefined);
+    });
+});
+
+test('ResetOwnerPassword sets a fresh strong password for the Owner principal: it authenticates, the old one stops', async () =>
+{
+    await ProvFixture.WithHost(async (conn, realms, directory) =>
+    {
+        const service = ProvFixture.Service(conn, directory);
+        const first = ProvFixture.Central(await service.Provision(ProvFixture.Input()));
+        const reset = await service.ResetOwnerPassword(ProvFixture.TenantId);
+        assert.equal(reset.ownerEmail, ProvFixture.OwnerEmail);
+        assert.ok(reset.ownerPassword.length >= ProvFixture.MinPasswordLength);
+        assert.notEqual(reset.ownerPassword, first.ownerPassword);
+        const realm = realms.For(ProvFixture.TenantId);
+        assert.ok(realm !== undefined);
+        assert.ok(await realm.AuthenticatePassword(ProvFixture.OwnerEmail, reset.ownerPassword) !== undefined);
+        assert.equal(await realm.AuthenticatePassword(ProvFixture.OwnerEmail, first.ownerPassword), undefined);
+        // Nothing about the reset is stored on the record.
+        assert.ok(!JSON.stringify(directory.GetTenant(ProvFixture.TenantId)).includes(reset.ownerPassword));
+    });
+});
+
+test('ResetOwnerPassword: unknown tenant, no Owner recorded, no IdP record', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        const idp = new FakeIdp(conn);
+        const service = new TenantProvisioningService(idp, directory, c => new IdpAdminClient(c));
+        await assert.rejects(service.ResetOwnerPassword(ProvFixture.UnknownId), UnknownTenantError);
+        await directory.CreateTenant({ id: ProvFixture.TenantId, clientId: ProvFixture.ClientId, displayName: ProvFixture.DisplayName });
+        await assert.rejects(service.ResetOwnerPassword(ProvFixture.TenantId), (e: unknown) => e instanceof OwnerNotRecordedError && /no Owner/.test(e.message));
+        await directory.DeleteTenant(ProvFixture.TenantId);
+        await service.Provision(ProvFixture.Input());
+        idp.HasRecord = false;
+        await assert.rejects(service.ResetOwnerPassword(ProvFixture.TenantId), (e: unknown) => e instanceof TenantIdpMissingError && /not managed by this control plane/.test(e.message) && /within the tenant's cluster/.test(e.message));
+    });
+});
+
+test('ResetOwnerPassword: an IdP without the Owner account, a refused token, an unreachable IdP - clear errors, never the password', async () =>
+{
+    await ProvFixture.WithHost(async (conn, realms, directory) =>
+    {
+        const seen: string[] = [];
+        const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new ResetSpyClient(c, seen));
+        await service.Provision(ProvFixture.Input());
+        // The Owner account is gone from the realm (e.g. the realm was rebuilt): unknown_account.
+        const ghost = await directory.CreateProvisionedTenant({ id: 'tenant-2', clientId: ProvFixture.ClientId, displayName: 'Two', ownerEmail: 'two@example.test', ownerPrincipalId: 'owner', idpBaseUrl: conn.baseUrl });
+        await new IdpAdminClient(conn).EnsureRealm(ghost.id, ghost.displayName);
+        await assert.rejects(service.ResetOwnerPassword(ghost.id), (e: unknown) => e instanceof OwnerAccountMissingError && /no Owner account/.test(e.message) && !seen.some(pw => String(e).includes(pw)));
+        const refusing = new TenantProvisioningService(new FakeIdp({ ...conn, adminToken: ProvFixture.BadToken }), directory, c => new ResetSpyClient(c, seen));
+        await assert.rejects(refusing.ResetOwnerPassword(ProvFixture.TenantId), (e: unknown) => e instanceof OwnerIdpRefusedError && /401/.test(e.message) && !seen.some(pw => String(e).includes(pw)) && !String(e).includes(ProvFixture.BadToken));
+        const unreachable = new TenantProvisioningService(new FakeIdp({ ...conn, baseUrl: 'https://localhost:1' }), directory, c => new ResetSpyClient(c, seen));
+        await assert.rejects(unreachable.ResetOwnerPassword(ProvFixture.TenantId), (e: unknown) => e instanceof IdpUnreachableError && /could not be reached/.test(e.message) && !seen.some(pw => String(e).includes(pw)));
+        assert.ok(seen.length >= 3);
+        assert.ok(realms.For(ProvFixture.TenantId) !== undefined);
+    });
+});
+
+// Records the passwords a reset sends, so a test can assert none leaks into an error.
+class ResetSpyClient extends IdpAdminClient
+{
+    public constructor(conn: IdpConnection, private readonly seen: string[])
+    {
+        super(conn);
+    }
+
+    public override async ResetPassword(tenantId: string, principalId: string, password: string): Promise<void>
+    {
+        this.seen.push(password);
+        return super.ResetPassword(tenantId, principalId, password);
+    }
+}
+
+test('ResetOwnerPassword ends the Owner\'s tenant-portal sessions after the IdP reset: a session issued before no longer validates', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        const sessions = new TenantSessions(TenantSessions.InMemory(), false);
+        const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), new TenantPrincipalSessions(sessions.Store));
+        await service.Provision(ProvFixture.Input());
+        const before = (await sessions.Store.Issue(ProvFixture.OwnerPrincipal, TenantSessionClaims.Of(ProvFixture.TenantId, undefined))).Token;
+        const desktop = (await sessions.IssueDesktop(new SignedInIdentity(ProvFixture.OwnerPrincipal, TenantSessionClaims.Of(ProvFixture.TenantId, undefined)))).Token;
+        const someoneElse = (await sessions.Store.Issue('user-2', TenantSessionClaims.Of(ProvFixture.TenantId, undefined))).Token;
+        const reset = await service.ResetOwnerPassword(ProvFixture.TenantId);
+        assert.equal(reset.sessionsRevoked, true);
+        assert.equal(reset.warning, undefined);
+        assert.equal(await sessions.Store.Validate(before), null);
+        assert.equal(await sessions.Store.Validate(desktop), null);
+        assert.notEqual(await sessions.Store.Validate(someoneElse), null);
+    });
+});
+
+test('a session revoke failure after the password changed still returns the password, with sessionsRevoked false and a warning', async () =>
+{
+    await ProvFixture.WithHost(async (conn, realms, directory) =>
+    {
+        const failing: IOwnerSessionRevoker = { RevokeAllFor: async () => { throw new Error('disk full'); }, RevokeTenant: async () => undefined };
+        const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), failing);
+        await service.Provision(ProvFixture.Input());
+        const reset = await service.ResetOwnerPassword(ProvFixture.TenantId);
+        assert.equal(reset.sessionsRevoked, false);
+        assert.match(reset.warning ?? '', /could not be ended durably: they may return after a control-plane restart/);
+        assert.ok(!(reset.warning ?? '').includes(reset.ownerPassword));
+        assert.ok(await realms.For(ProvFixture.TenantId)!.AuthenticatePassword(ProvFixture.OwnerEmail, reset.ownerPassword) !== undefined);
+    });
+});
+
+test('a refused or failed IdP reset ends no session', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        const calls: string[] = [];
+        const spy: IOwnerSessionRevoker = { RevokeAllFor: async (t: string, p: string) => { calls.push(t + '/' + p); }, RevokeTenant: async () => undefined };
+        const service = new TenantProvisioningService(new FakeIdp({ ...conn, adminToken: ProvFixture.BadToken }), directory, c => new IdpAdminClient(c), spy);
+        await new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c)).Provision(ProvFixture.Input());
+        await assert.rejects(service.ResetOwnerPassword(ProvFixture.TenantId), OwnerIdpRefusedError);
+        assert.deepEqual(calls, []);
+    });
+});
+
+// An admin client whose reset fails at the transport with a given code, or waits on a gate.
+class TransportClient extends IdpAdminClient
+{
+    public Gate: Promise<void> | undefined;
+
+    public constructor(conn: IdpConnection, private readonly code: string | undefined)
+    {
+        super(conn);
+    }
+
+    public override async ResetPassword(_tenantId: string, _principalId: string, _password: string): Promise<void>
+    {
+        if (this.Gate !== undefined)
+        {
+            await this.Gate;
+        }
+        if (this.code !== undefined)
+        {
+            throw new IdpAdminTransportError(this.code);
+        }
+    }
+}
+
+test('an unreachable IdP: refused / not found before sending -> nothing changed; timeout or reset mid-request -> may have been applied', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        await new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c)).Provision(ProvFixture.Input());
+        for (const code of ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH',
+            'ERR_TLS_CERT_ALTNAME_INVALID', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+            'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'CERT_UNTRUSTED'])
+        {
+            const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new TransportClient(c, code));
+            await assert.rejects(service.ResetOwnerPassword(ProvFixture.TenantId), (e: unknown) => e instanceof IdpUnreachableError && /Nothing was changed/.test(e.message) && e.message.includes(code));
+        }
+        for (const code of ['ETIMEDOUT', 'ECONNRESET', 'EPIPE', 'UNKNOWN'])
+        {
+            const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new TransportClient(c, code));
+            await assert.rejects(service.ResetOwnerPassword(ProvFixture.TenantId), (e: unknown) => e instanceof IdpUnreachableError && /may have been applied/.test(e.message) && /reset again/.test(e.message) && !/Nothing was changed/.test(e.message));
+        }
+    });
+});
+
+test('a second reset of the same tenant while one is in flight is refused; another tenant is not blocked', async () =>
+{
+    await ProvFixture.WithHost(async (conn, _realms, directory) =>
+    {
+        await new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c)).Provision(ProvFixture.Input());
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const service = new TenantProvisioningService(new FakeIdp(conn), directory, c =>
+        {
+            const client = new TransportClient(c, undefined);
+            client.Gate = gate;
+            return client;
+        });
+        const first = service.ResetOwnerPassword(ProvFixture.TenantId);
+        await new Promise(resolve => setImmediate(resolve));
+        await assert.rejects(service.ResetOwnerPassword(ProvFixture.TenantId), (e: unknown) => e instanceof OwnerResetInProgressError && /already being reset/.test(e.message));
+        release();
+        assert.equal((await first).ownerEmail, ProvFixture.OwnerEmail);
+        // Released: the next reset may run.
+        assert.equal((await service.ResetOwnerPassword(ProvFixture.TenantId)).ownerEmail, ProvFixture.OwnerEmail);
+    });
+});
+
+class NeverIdp implements IIdpService
+{
+    public Calls = 0;
+
+    public async ConnectForTenant(_tenantId: string): Promise<IdpConnection | undefined>
+    {
+        this.Calls++;
+        throw new Error('no IdP in in-hive mode');
+    }
+
+    public async TeardownForTenant(_tenantId: string): Promise<void>
+    {
+        this.Calls++;
+        throw new Error('no IdP in in-hive mode');
+    }
+
+    public async EnsureForTenant(_tenantId: string, _displayName: string): Promise<IdpConnection>
+    {
+        this.Calls++;
+        throw new Error('no IdP in in-hive mode');
+    }
+}
+
+test('in-hive mode records the tenant with its owner email and starts no IdP', async () =>
+{
+    await ProvFixture.WithHost(async (_conn, _realms, directory) =>
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), ProvFixture.DirPrefix));
+        try
+        {
+            const index = new TenantAccountIndex(path.join(dir, 'tenant-accounts.json'));
+            await index.Load();
+            const idp = new NeverIdp();
+            const service = new TenantProvisioningService(idp, directory, () => { throw new Error('no admin client in in-hive mode'); }, undefined, index, TenantIdpMode.InHive);
+            const result = await service.Provision(ProvFixture.Input());
+            assert.equal(idp.Calls, 0);
+            assert.equal(result.ownerPassword, undefined);
+            assert.equal(result.record.ownerEmail, ProvFixture.OwnerEmail);
+            assert.equal(result.record.ownerPrincipalId, 'owner');
+            assert.equal(result.record.idpBaseUrl, undefined);
+            assert.deepEqual(directory.GetTenant(ProvFixture.TenantId)?.ownerEmail, ProvFixture.OwnerEmail);
+            assert.deepEqual(index.TenantsFor(ProvFixture.OwnerEmail), [ProvFixture.TenantId]);
+            await assert.rejects(service.Provision(ProvFixture.Input()), RecordExistsError);
+        }
+        finally
+        {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+

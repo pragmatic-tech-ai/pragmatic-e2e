@@ -1,0 +1,404 @@
+/**
+ * GATED real-cluster smoke for the k8s Hive Orchestrator. NOT part of `tsx --test`.
+ *
+ * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster) and the
+ * `pragmatic-server:dev` image on the cluster's node (`dev/dev-cluster.ts up` loads it there;
+ * the manifest uses imagePullPolicy IfNotPresent). Run with:
+ *
+ *   npx tsx admin/control-plane/k8s-hive-smoke.ts
+ *
+ * Drives a throwaway dev-blank environment through Apply -> WaitHealthy -> serve ->
+ * Roll -> Teardown via a real KubectlHiveOrchestrator. SP-HIVE-3 made Apply/Roll fail closed on
+ * image provenance, so the smoke is provenance-aware: it signs the effective image ref with a
+ * throwaway dev Ed25519 key (temp key/signature stores) and composes the orchestrator with a real
+ * CryptoImageVerifier + trust root, exactly as registry-provenance-smoke.ts does.
+ */
+import { spawn, type ChildProcess } from 'node:child_process'
+import { SmokeCluster } from './smoke-cluster.js'
+import { generateKeyPairSync, randomBytes } from 'node:crypto'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { get } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { BundleBuilder, EnvServerSeedSource, TemplateCatalog, EnvironmentWorkloadFactory, type EnvironmentWorkload, EnvStatus, EnvType, Template, type EnvironmentRecord, EffectiveRegistry, type IHiveOrchestrator, K8sManifestBuilder, KubectlHiveOrchestrator, HiveBackend, InfraMode, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { DockerImageDigest } from './image-digest.js'
+import { ImageSigner, CryptoImageVerifier, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
+import { FileSignatureStore } from './signature-store.js'
+
+export class K8sHiveSmoke
+{
+    private static readonly Context = SmokeCluster.Context()
+    private static readonly EnvPrefix = 'k8s-smoke-'
+    private static readonly SuffixBytes = 3
+    private static readonly Hex = 'hex'
+    /** Per-run name so a run never collides with (or tears down) a pre-existing namespace. */
+    private static readonly EnvName = K8sHiveSmoke.EnvPrefix + randomBytes(K8sHiveSmoke.SuffixBytes).toString(K8sHiveSmoke.Hex)
+    private static readonly HiveId = 'smoke-hive'
+    private static readonly TenantId = 'smoke-tenant'
+    private static readonly Image = 'pragmatic-server:dev'
+    private static readonly KeysDirName = 'keys'
+    private static readonly SignaturesFileName = 'signatures.json'
+    private static readonly TempDirPrefix = 'k8s-smoke-prov-'
+    private static readonly SigningKeyRef = 'dev-signing'
+    private static readonly Ed25519 = 'ed25519'
+    private static readonly Pem = 'pem'
+    private static readonly Spki = 'spki'
+    private static readonly Pkcs8 = 'pkcs8'
+    private static readonly InfoTag = 'INFO '
+    private static readonly InfoSigned = 'signed effective image ref with key ref: '
+    private static readonly CleanupWarning = 'WARN temp key/signature store cleanup failed -- '
+    private static readonly HealthPath = '/healthz'
+    private static readonly LoopbackHost = '127.0.0.1'
+    private static readonly EpochIso = '1970-01-01T00:00:00.000Z'
+    private static readonly EmptyString = ''
+    private static readonly SeedDirPrefix = 'k8s-smoke-seed-'
+    private static readonly Kubectl = 'kubectl'
+    private static readonly ContextFlag = '--context'
+    private static readonly NamespaceFlag = '-n'
+    private static readonly PortForwardVerb = 'port-forward'
+    private static readonly GetVerb = 'get'
+    private static readonly NamespaceKind = 'namespace'
+    private static readonly ServicePrefix = 'service/'
+    /** Empty local port before the colon = kubectl picks a free one, so no fixed local port can collide. */
+    private static readonly AutoLocalPort = ':'
+    private static readonly ForwardingPattern = /127\.0\.0\.1:(\d+)/
+    private static readonly NotFoundWord = 'NotFound'
+    private static readonly StdoutEvent = 'data'
+    private static readonly ErrorEvent = 'error'
+    private static readonly ExitEvent = 'exit'
+    private static readonly EndEvent = 'end'
+    private static readonly Utf8 = 'utf8'
+    private static readonly SigTerm = 'SIGTERM'
+    private static readonly StatusOk = 200
+    private static readonly ForwardTimeoutMs = 30000
+    private static readonly ServeAttempts = 20
+    private static readonly ServeIntervalMs = 1000
+    private static readonly PassTag = 'PASS '
+    private static readonly FailTag = 'FAIL '
+    private static readonly DetailSep = ' -- '
+    private static readonly TeardownWarning = 'WARN best-effort teardown failed for namespace '
+    private static readonly OverallPass = 'OVERALL PASS'
+    private static readonly OverallFail = 'OVERALL FAIL'
+    private static readonly CrashPrefix = 'smoke crashed: '
+    private static readonly ForwardTimeoutMessage = 'port-forward did not report a local port in time'
+    private static readonly ForwardExitedMessage = 'port-forward exited before reporting a local port'
+    private static readonly StatusWord = ' status='
+    private static readonly Labels = {
+        Apply: 'k8s: Apply succeeds (namespace + server Deployment + Service)',
+        Namespace: 'k8s: namespace exists after Apply',
+        Healthy: 'k8s: WaitHealthy (server rollout completes, pod Ready)',
+        Health: 'k8s: Health reports ready on the requested image',
+        Serves: 'k8s: server answers /healthz through port-forward',
+        Roll: 'k8s: Roll to the same image completes its rollout',
+        Rolled: 'k8s: still ready after Roll',
+        Teardown: 'k8s: Teardown completes',
+        Gone: 'k8s: namespace reports NotFound after Teardown',
+    }
+
+    private failed = false
+    private tempDir: string | undefined
+
+    public static async Main(): Promise<void>
+    {
+        const smoke = new K8sHiveSmoke()
+        const ok = await smoke.Run()
+        console.log(ok ? K8sHiveSmoke.OverallPass : K8sHiveSmoke.OverallFail)
+        process.exit(ok ? 0 : 1)
+    }
+
+    public async Run(): Promise<boolean>
+    {
+        const S = K8sHiveSmoke
+        const workload = S.Workload()
+        const namespace = K8sManifestBuilder.NamespaceOf(workload.environmentName)
+        let orchestrator: IHiveOrchestrator | undefined
+        let tornDown = false
+        try
+        {
+            orchestrator = await this.SignedOrchestrator()
+            await orchestrator.Apply(workload)
+            this.Expect(S.Labels.Apply, true)
+            this.Expect(S.Labels.Namespace, await this.NamespaceExists(namespace))
+            await this.ApplySeed(orchestrator, workload.environmentName)
+            await orchestrator.WaitHealthy(workload)
+            this.Expect(S.Labels.Healthy, true)
+            await this.CheckHealth(orchestrator, workload, S.Labels.Health)
+            await this.CheckServes(workload)
+            await orchestrator.Roll(workload, S.Image)
+            this.Expect(S.Labels.Roll, true)
+            await this.CheckHealth(orchestrator, workload, S.Labels.Rolled)
+            await orchestrator.Teardown(workload)
+            tornDown = true
+            this.Expect(S.Labels.Teardown, true)
+            this.Expect(S.Labels.Gone, !(await this.NamespaceExists(namespace)))
+        }
+        catch (err)
+        {
+            this.failed = true
+            console.log(S.CrashPrefix + (err instanceof Error ? err.message : String(err)))
+        }
+        finally
+        {
+            if (!tornDown)
+            {
+                await this.BestEffortTeardown(orchestrator ?? this.UnsignedOrchestrator(), workload)
+            }
+            await this.CleanupTempStores()
+        }
+        return !this.failed
+    }
+
+    /**
+     * Signs the effective image ref (what VerifiedImage verifies) into temp stores and returns an
+     * orchestrator whose fail-closed verifier reads them, with the trust root set to the dev public key ref.
+     */
+    private async SignedOrchestrator(): Promise<IHiveOrchestrator>
+    {
+        const S = K8sHiveSmoke
+        this.tempDir = await mkdtemp(join(tmpdir(), S.TempDirPrefix))
+        const keysDir = join(this.tempDir, S.KeysDirName)
+        await this.WriteKeyPair(keysDir, S.SigningKeyRef)
+        const keys = new FileKeyStore(keysDir)
+        const signatures = new FileSignatureStore(join(this.tempDir, S.SignaturesFileName))
+        const effective = EffectiveRegistry.For(S.Hive())
+        await new ImageSigner(new DockerImageDigest(), signatures, keys).Sign(effective.ImageRef(S.Image), S.SigningKeyRef)
+        console.log(S.InfoTag + S.InfoSigned + S.SigningKeyRef)
+        const verifier = new CryptoImageVerifier(new DockerImageDigest(), signatures, keys)
+        return new KubectlHiveOrchestrator(new KubectlCli(S.Context), new K8sManifestBuilder(), effective, verifier, S.SigningKeyRef)
+    }
+
+    /** Teardown never verifies provenance, so a trust-root-less orchestrator is enough for cleanup if signing setup itself failed. */
+    private UnsignedOrchestrator(): IHiveOrchestrator
+    {
+        const S = K8sHiveSmoke
+        const effective = EffectiveRegistry.For(S.Hive())
+        const verifier = new CryptoImageVerifier(new DockerImageDigest(), new FileSignatureStore(S.EmptyString), new FileKeyStore(S.EmptyString))
+        return new KubectlHiveOrchestrator(new KubectlCli(S.Context), new K8sManifestBuilder(), effective, verifier, undefined)
+    }
+
+    /** Writes `<ref>.pub` / `<ref>.key` PEM files in the layout FileKeyStore reads. The private PEM is never logged. */
+    private async WriteKeyPair(keysDir: string, ref: string): Promise<void>
+    {
+        const S = K8sHiveSmoke
+        await mkdir(keysDir, { recursive: true })
+        const pair = generateKeyPairSync(S.Ed25519)
+        await writeFile(join(keysDir, ref + FileKeyStore.PublicSuffix), pair.publicKey.export({ type: S.Spki, format: S.Pem }), S.Utf8)
+        await writeFile(join(keysDir, ref + FileKeyStore.PrivateSuffix), pair.privateKey.export({ type: S.Pkcs8, format: S.Pem }), S.Utf8)
+    }
+
+    private async CleanupTempStores(): Promise<void>
+    {
+        if (this.tempDir === undefined)
+        {
+            return
+        }
+        try
+        {
+            await rm(this.tempDir, { recursive: true, force: true })
+        }
+        catch (e)
+        {
+            console.log(K8sHiveSmoke.CleanupWarning + KubectlError.Redact(e instanceof Error ? e.message : String(e)))
+        }
+    }
+
+    /** A throwaway dev-blank environment, derived exactly as production derives it (no database for dev-blank). */
+    private static Workload(): EnvironmentWorkload
+    {
+        const S = K8sHiveSmoke
+        const record: EnvironmentRecord = {
+            name: S.EnvName,
+            type: EnvType.Development,
+            template: Template.DevBlank,
+            environmentId: S.EnvName,
+            hiveId: S.HiveId,
+            hostPort: 0,
+            containerName: S.EnvName,
+            volumeName: S.EnvName,
+            bundleDir: S.EmptyString,
+            createdAt: S.EpochIso,
+            status: EnvStatus.Unknown,
+        }
+        return EnvironmentWorkloadFactory.From(record, S.Hive())
+    }
+
+    /** Applies the real env-server seed (tenants ConfigMap + Secrets) exactly as InClusterEnvironmentRuntime.BringUp does. */
+    private async ApplySeed(orchestrator: IHiveOrchestrator, environmentName: string): Promise<void>
+    {
+        const S = K8sHiveSmoke
+        const { def, seedDir } = TemplateCatalog.Resolve(Template.DevBlank, environmentName, 0, EnvType.Development)
+        const bundleDir = await mkdtemp(join(tmpdir(), S.SeedDirPrefix))
+        try
+        {
+            await BundleBuilder.Generate(def, bundleDir, seedDir)
+            await EnvServerSeedSource.ApplyBundle(orchestrator.Kubectl, bundleDir, environmentName, def.environmentId)
+        }
+        finally
+        {
+            await rm(bundleDir, { recursive: true, force: true })
+        }
+    }
+
+    /** A local/attach hive pointing at the smoke cluster's context. */
+    private static Hive(): HiveRecord
+    {
+        const S = K8sHiveSmoke
+        return {
+            id: S.HiveId,
+            tenantId: S.TenantId,
+            displayName: S.HiveId,
+            cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach, configRef: S.Context },
+            registry: { mode: InfraMode.Attach },
+            createdAt: S.EpochIso,
+        }
+    }
+
+    private async CheckHealth(orchestrator: IHiveOrchestrator, workload: EnvironmentWorkload, label: string): Promise<void>
+    {
+        const health = await orchestrator.Health(workload)
+        this.Expect(label, health.ready && health.runningImage === K8sHiveSmoke.Image, health.detail)
+    }
+
+    /**
+     * Reaches the Service with `kubectl port-forward` rather than a NodePort: a NodePort claims a
+     * cluster-wide port that outlives the run and can collide with other environments, whereas a
+     * port-forward is a client-side tunnel on an auto-chosen free local port that dies with this process.
+     */
+    private async CheckServes(workload: EnvironmentWorkload): Promise<void>
+    {
+        const S = K8sHiveSmoke
+        const service = S.ServicePrefix + K8sManifestBuilder.ServerDeploymentOf(workload.environmentName)
+        const forward = spawn(S.Kubectl, [
+            S.ContextFlag, S.Context,
+            S.NamespaceFlag, K8sManifestBuilder.NamespaceOf(workload.environmentName),
+            S.PortForwardVerb, service, S.AutoLocalPort + String(workload.serverPort),
+        ])
+        try
+        {
+            const port = await S.LocalPortOf(forward)
+            const status = await this.ProbeHealth(port)
+            this.Expect(S.Labels.Serves, status === S.StatusOk, S.StatusWord + String(status))
+        }
+        finally
+        {
+            forward.kill(S.SigTerm)
+        }
+    }
+
+    /** Resolves the local port from kubectl's "Forwarding from 127.0.0.1:PORT -> ..." line. */
+    private static LocalPortOf(forward: ChildProcess): Promise<number>
+    {
+        const S = K8sHiveSmoke
+        return new Promise<number>((resolve, reject) =>
+        {
+            const timer = setTimeout(() => reject(new Error(S.ForwardTimeoutMessage)), S.ForwardTimeoutMs)
+            forward.stdout?.setEncoding(S.Utf8)
+            forward.stdout?.on(S.StdoutEvent, (chunk: string) =>
+            {
+                const match = S.ForwardingPattern.exec(chunk)
+                if (match !== null)
+                {
+                    clearTimeout(timer)
+                    resolve(Number(match[1]))
+                }
+            })
+            forward.on(S.ErrorEvent, err =>
+            {
+                clearTimeout(timer)
+                reject(err)
+            })
+            forward.on(S.ExitEvent, () =>
+            {
+                clearTimeout(timer)
+                reject(new Error(S.ForwardExitedMessage))
+            })
+        })
+    }
+
+    /** GETs /healthz, retrying briefly (the tunnel can lag the first request); returns the last status, 0 if never answered. */
+    private async ProbeHealth(port: number): Promise<number>
+    {
+        const S = K8sHiveSmoke
+        let status = 0
+        for (let attempt = 0; attempt < S.ServeAttempts && status !== S.StatusOk; attempt++)
+        {
+            status = await S.HttpStatus(port)
+            if (status !== S.StatusOk)
+            {
+                await new Promise<void>(resolve => setTimeout(resolve, S.ServeIntervalMs))
+            }
+        }
+        return status
+    }
+
+    private static HttpStatus(port: number): Promise<number>
+    {
+        const S = K8sHiveSmoke
+        return new Promise<number>(resolve =>
+        {
+            const req = get({ host: S.LoopbackHost, port, path: S.HealthPath }, res =>
+            {
+                res.resume()
+                res.on(S.EndEvent, () => resolve(res.statusCode ?? 0))
+            })
+            req.on(S.ErrorEvent, () => resolve(0))
+        })
+    }
+
+    /** `kubectl get namespace` succeeding = exists; a NotFound failure = gone; any other failure is a real error. */
+    private async NamespaceExists(namespace: string): Promise<boolean>
+    {
+        const S = K8sHiveSmoke
+        try
+        {
+            await new NodeExecFile().Run(S.Kubectl, [S.ContextFlag, S.Context, S.GetVerb, S.NamespaceKind, namespace])
+            return true
+        }
+        catch (e)
+        {
+            const stderr = String((e as { stderr?: unknown }).stderr ?? S.EmptyString)
+            if (stderr.includes(S.NotFoundWord))
+            {
+                return false
+            }
+            throw e
+        }
+    }
+
+    /** Failure-path cleanup so a crashed run never leaves the namespace behind. */
+    private async BestEffortTeardown(orchestrator: IHiveOrchestrator, workload: EnvironmentWorkload): Promise<void>
+    {
+        const S = K8sHiveSmoke
+        try
+        {
+            await orchestrator.Teardown(workload)
+        }
+        catch (e)
+        {
+            console.log(S.TeardownWarning + K8sManifestBuilder.NamespaceOf(workload.environmentName) + S.DetailSep + KubectlError.Redact(e instanceof Error ? e.message : String(e)))
+        }
+    }
+
+    private Expect(label: string, ok: boolean, detail: string = K8sHiveSmoke.EmptyString): void
+    {
+        if (!ok)
+        {
+            this.failed = true
+        }
+        const suffix = ok || detail === K8sHiveSmoke.EmptyString ? K8sHiveSmoke.EmptyString : K8sHiveSmoke.DetailSep + detail
+        console.log((ok ? K8sHiveSmoke.PassTag : K8sHiveSmoke.FailTag) + label + suffix)
+    }
+
+    /** True when this module is the process entry point (not when imported). */
+    public static IsEntryPoint(): boolean
+    {
+        return process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1]
+    }
+}
+
+if (K8sHiveSmoke.IsEntryPoint())
+{
+    await K8sHiveSmoke.Main()
+}
