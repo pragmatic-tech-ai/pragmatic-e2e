@@ -5,11 +5,11 @@
  * the tenant plane); the OPERATOR promotes (operator API). Each subcommand prints ONE JSON descriptor to stdout. Tokens and
  * passwords are never passed to the logger (stderr).
  *
- *   npx tsx admin/control-plane/live-loop/loop-orchestrator.ts create-dev [--stack <stack.json>] [--graph <g>]
- *   npx tsx admin/control-plane/live-loop/loop-orchestrator.ts create-runtime [--stack <stack.json>]
- *   npx tsx admin/control-plane/live-loop/loop-orchestrator.ts promote [--stack <stack.json>] --graph <g>
- *   npx tsx admin/control-plane/live-loop/loop-orchestrator.ts db-exec [--stack <stack.json>] --sql <sql>
- *   npx tsx admin/control-plane/live-loop/loop-orchestrator.ts teardown [--stack <stack.json>]
+ *   npx tsx src/live-loop/loop-orchestrator.ts create-dev [--stack <stack.json>] [--graph <g>]
+ *   npx tsx src/live-loop/loop-orchestrator.ts create-runtime [--stack <stack.json>]
+ *   npx tsx src/live-loop/loop-orchestrator.ts promote [--stack <stack.json>] --graph <g>
+ *   npx tsx src/live-loop/loop-orchestrator.ts db-exec [--stack <stack.json>] --sql <sql>
+ *   npx tsx src/live-loop/loop-orchestrator.ts teardown [--stack <stack.json>]
  *
  * `--stack` defaults to ~/.pragmatic/e2e-stack/stack.json.
  */
@@ -18,7 +18,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { CreateAccountParams, GrantMutationDto, SecurityCatalogDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { BundleBuilder, type PromotionResultDto, EnvStatus, EnvType, Template } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { RuntimeReaderSecurity } from '../runtime-reader-security.js'
+import { RuntimeReaderSecurity } from '../../repos/pragmatic-platform-admin/src/runtime-reader-security.js'
 import { LiveLoopStack } from './live-loop-stack.js'
 import { LoopStackComposition } from './loop-stack-adapters.js'
 

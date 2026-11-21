@@ -5,7 +5,7 @@
  * image in the local image store (the per-tenant IdP container and the hive workload both run from it), and the
  * Playwright Chromium browser. Run with:
  *
- *   npx tsx admin/control-plane/tenant-login-e2e-smoke.ts
+ *   npx tsx src/smoke/tenant-login-e2e-smoke.ts
  *
  * Proves the whole tenant-admin loop end to end: it composes the real control plane in-process (as server.ts and
  * the retired Docker-era federation smoke did), provisions tenant `acme` (launching its IdP container), creates a hive plus one
@@ -27,36 +27,37 @@ import { generateKeyPairSync } from 'node:crypto'
 import { SmokeCluster } from './smoke-cluster.js'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { SiblingCheckouts } from '../stack/sibling-checkouts.js'
 import { chromium } from 'playwright'
-import { DockerEnv } from '../../environments/seed/docker.js'
+import { DockerEnv } from '../../repos/pragmatic-platform-admin/src/environments/seed/docker.js'
 import { UserSeeder, BundleBuilderAdapter, UserSeederAdapter, DockerEnvironmentRuntime, EnvironmentRuntimeResolver, InClusterEnvironmentRuntime, EnvironmentRegistry, EnvironmentService, EnvStatus, EnvType, Template, type EnvironmentRecord, TemplateCatalog, BundleBuilder, EnvServerSeedSource, type EnvironmentWorkload, HiveBackend, InfraMode, type HiveRecord, AdminProxy, WsAdminConnector, IdpAdminClient, NetPortProbe, PortAllocator, ManifestRegistry, EnvironmentPlacement, type HiveOrchestratorFactory, type IHiveOrchestrator, K8sManifestBuilder, TenantAdminClientRegistry, TenantHostResolver, TenantConsoleHost, TenantPlaneComposer, TenantSessions } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { DockerEnvAdapter } from './docker-env-port.js'
-import { ClientRegistry } from './client-registry.js'
-import { HiveRegistry } from './hive-registry.js'
-import { TenantRegistry } from './tenant-registry.js'
-import { PlatformDirectory } from './platform-directory.js'
-import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
-import { IdpRegistry } from './idp-registry.js'
-import { DockerIdpDriver } from './docker-idp-driver.js'
-import { IdpService, type IdpConnection } from './idp-service.js'
-import { TenantProvisioningService } from './tenant-provisioning-service.js'
-import { GatingRegistry } from './gating-record.js'
-import { SelectionRegistry } from './selection-record.js'
-import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
-import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
-import { HiveObservationRegistry } from './hive-observation-record.js'
-import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
-import { IdpLoginPage } from './idp-login-page.js'
+import { DockerEnvAdapter } from '../../repos/pragmatic-platform-admin/src/docker-env-port.js'
+import { ClientRegistry } from '../../repos/pragmatic-platform-admin/src/client-registry.js'
+import { HiveRegistry } from '../../repos/pragmatic-platform-admin/src/hive-registry.js'
+import { TenantRegistry } from '../../repos/pragmatic-platform-admin/src/tenant-registry.js'
+import { PlatformDirectory } from '../../repos/pragmatic-platform-admin/src/platform-directory.js'
+import { ExecFileDockerExec, IdpContainerEnv } from '../../repos/pragmatic-platform-admin/src/idp-container-env.js'
+import { IdpRegistry } from '../../repos/pragmatic-platform-admin/src/idp-registry.js'
+import { DockerIdpDriver } from '../../repos/pragmatic-platform-admin/src/docker-idp-driver.js'
+import { IdpService, type IdpConnection } from '../../repos/pragmatic-platform-admin/src/idp-service.js'
+import { TenantProvisioningService } from '../../repos/pragmatic-platform-admin/src/tenant-provisioning-service.js'
+import { GatingRegistry } from '../../repos/pragmatic-platform-admin/src/gating-record.js'
+import { SelectionRegistry } from '../../repos/pragmatic-platform-admin/src/selection-record.js'
+import { RolloutRegistrationRegistry } from '../../repos/pragmatic-platform-admin/src/rollout-registration-record.js'
+import { PlatformDeploymentRegistry } from '../../repos/pragmatic-platform-admin/src/platform-deployment-registry.js'
+import { HiveObservationRegistry } from '../../repos/pragmatic-platform-admin/src/hive-observation-record.js'
+import { PlatformHiveOrchestratorFactory } from '../../repos/pragmatic-platform-admin/src/platform-hive-orchestrator-factory.js'
+import { IdpLoginPage } from '../../repos/pragmatic-platform-admin/src/idp-login-page.js'
 import { KindImageLoader } from './kind-image-loader.js'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
-import { DockerImageDigest } from './image-digest.js'
+import { DockerImageDigest } from '../../repos/pragmatic-platform-admin/src/image-digest.js'
 import { ImageSigner, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
-import { FileSignatureStore } from './signature-store.js'
+import { FileSignatureStore } from '../../repos/pragmatic-platform-admin/src/signature-store.js'
 import { InMemoryOidcFlowStateStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { MapSecretStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc/testing'
-import { InProcessRolloutClient } from './tenant-api/in-process-rollout-client.js'
+import { InProcessRolloutClient } from '../../repos/pragmatic-platform-admin/src/tenant-api/in-process-rollout-client.js'
 
 /**
  * A resolver whose callback KEEPS the request host's port. The production `TenantHostResolver` strips the port (the
@@ -164,14 +165,17 @@ export class TenantLoginE2eSmoke
     private static readonly SeedDirPrefix = 'tenant-login-seed-'
 
 
-    private static readonly TenantPortalRel = '../tenant-portal/dist'
+    /** The tenant portal's bundle, in the pragmatic-tenant-admin checkout under repos/ (`npm run build` there first). */
+    private static readonly TenantAdminRepo = 'pragmatic-tenant-admin'
+    private static readonly TenantPortalDir = 'tenant-portal'
+    private static readonly DistDir = 'dist'
     private static readonly HostResolverRules = '--host-resolver-rules=MAP *.admin.localtest 127.0.0.1, MAP host.docker.internal 127.0.0.1'
     private static readonly FormSelector = 'form'
     private static readonly SessionCookieName = 'pts_session'
     private static readonly RootPath = '/'
 
     // Portal text and geometry the browser drives (the Mural tenant portal: Overview first, Releases > Adopt).
-    // Mirrors the portal's markup and its e2e (admin/tenant-portal/tests); hoisted here so the smoke owns its
+    // Mirrors the portal's markup and its e2e (pragmatic-tenant-admin tenant-portal/tests); hoisted here so the smoke owns its
     // literals without a cross-package import that may not resolve under tsx.
     private static readonly RootLabel = 'Overview'
     private static readonly ReleasesTitle = 'Releases'
@@ -377,8 +381,7 @@ export class TenantLoginE2eSmoke
             ClientSecrets: { Store: new MapSecretStore(), Registry: plane.adminClientRegistry, TtlMs: TenantPlaneComposer.SecretTtlMsOf(S.SecretTtlHours) },
             Desktop: true,
         })
-        const here = dirname(fileURLToPath(import.meta.url))
-        const host = new TenantConsoleHost({ Plane: tenantPlane, Resolver: resolver, Service: plane.service, PortalRoot: join(here, S.TenantPortalRel) })
+        const host = new TenantConsoleHost({ Plane: tenantPlane, Resolver: resolver, Service: plane.service, PortalRoot: SiblingCheckouts.PathOf(S.TenantAdminRepo, S.TenantPortalDir, S.DistDir) })
         await host.Listen(0, S.BindHost)
         const port = host.Address().port
         this.Check(S.M_ListenerUp, Number.isInteger(port) && port > 0, S.PortDetail + String(port))

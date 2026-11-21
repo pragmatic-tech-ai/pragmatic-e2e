@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      "@pragmatic-tech-ai/pragmatic-identity-engine-binding": [
+        "./repos/pragmatic-env-server/packages/pragmatic-identity-engine-binding/src/index.ts"
+      ],
+      "@pragmatic-tech-ai/pragmatic-connectors-host": [
+        "./repos/pragmatic-env-server/packages/pragmatic-connectors-host/src/index.ts"
+      ]
+    },
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "src"
+  ]
+}

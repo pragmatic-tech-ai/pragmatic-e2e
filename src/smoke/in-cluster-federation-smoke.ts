@@ -7,7 +7,7 @@
  * free, and public DNS for `*.localtest.me`
  * (resolves to 127.0.0.1) for the Node-side IdP admin calls. Run with:
  *
- *   npx tsx admin/control-plane/in-cluster-federation-smoke.ts
+ *   npx tsx src/smoke/in-cluster-federation-smoke.ts
  *
  * Steps: (1) create a kind cluster with a :443 extraPortMapping; (2) install ingress-nginx with --enable-ssl-passthrough;
  * (3) provision the tenant IdP in-cluster (dual-SAN cert: Service-DNS + idp-<tenant>.<baseDomain>) and seed a realm + owner;
@@ -25,21 +25,21 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium, type BrowserContext, type Page } from 'playwright'
-import { DockerEnv } from '../../environments/seed/docker.js'
+import { DockerEnv } from '../../repos/pragmatic-platform-admin/src/environments/seed/docker.js'
 import { UserSeeder, AdminProxy, WsAdminConnector, BundleBuilderAdapter, UserSeederAdapter, EffectiveRegistry, EnvironmentPlacement, EnvType, Template, EnvironmentRegistry, DockerEnvironmentRuntime, EnvironmentRuntimeResolver, EnvironmentService, IdpAdminClient, type IIdpService, InClusterEnvironmentRuntime, K8sManifestBuilder, NetPortProbe, PortAllocator, HiveBackend, InfraMode, type HiveRecord, type TenantRecord, IdpDatabaseSecret } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { DockerEnvAdapter } from './docker-env-port.js'
-import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
-import type { IdpConnection } from './idp-service.js'
-import { DockerImageDigest } from './image-digest.js'
+import { DockerEnvAdapter } from '../../repos/pragmatic-platform-admin/src/docker-env-port.js'
+import { PlatformHiveOrchestratorFactory } from '../../repos/pragmatic-platform-admin/src/platform-hive-orchestrator-factory.js'
+import type { IdpConnection } from '../../repos/pragmatic-platform-admin/src/idp-service.js'
+import { DockerImageDigest } from '../../repos/pragmatic-platform-admin/src/image-digest.js'
 import { ImageSigner, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
-import { InClusterIdpDriver } from './in-cluster-idp-driver.js'
-import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
-import { IdpLoginPage } from './idp-login-page.js'
-import { KindCli } from './kind.js'
+import { InClusterIdpDriver } from '../../repos/pragmatic-platform-admin/src/in-cluster-idp-driver.js'
+import { InClusterIdpSeedSource } from '../../repos/pragmatic-platform-admin/src/in-cluster-idp-seed.js'
+import { IdpLoginPage } from '../../repos/pragmatic-platform-admin/src/idp-login-page.js'
+import { KindCli } from '../../repos/pragmatic-platform-admin/src/kind.js'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
-import { FileSignatureStore } from './signature-store.js'
-import { TenantAdminBootstrap, type IHiveRegistrar } from './tenant-admin-bootstrap.js'
-import { SeededTenantDirectory } from './tenant-api/seeded-tenant-directory.js'
+import { FileSignatureStore } from '../../repos/pragmatic-platform-admin/src/signature-store.js'
+import { TenantAdminBootstrap, type IHiveRegistrar } from '../../repos/pragmatic-platform-admin/src/tenant-admin-bootstrap.js'
+import { SeededTenantDirectory } from '../../repos/pragmatic-tenant-admin/src/tenant-api/seeded-tenant-directory.js'
 
 /** Hands out a throwaway agent bearer; this smoke does not run a platform agent channel. */
 class SmokeRegistrar implements IHiveRegistrar

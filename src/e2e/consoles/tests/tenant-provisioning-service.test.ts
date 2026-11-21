@@ -4,15 +4,15 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { IdpRealmSet } from '../../../src/idp/idp-realm-set.js';
-import { TenantIdpTestHost } from '../../../src/idp/tests/tenant-idp-test-host.js';
+import type { IdpRealmSet } from '../../../../repos/pragmatic-tenant-idp/src/idp-realm-set.js';
+import { TenantIdpTestHost } from '../../../../repos/pragmatic-tenant-idp/src/tests/tenant-idp-test-host.js';
 import { IdpAdminClient, type IIdpService, type IOwnerSessionRevoker, type TenantRecord, IdpAdminTransportError, TenantAccountIndex, TenantIdpMode, TenantSessionClaims, TenantSessions, TenantPrincipalSessions } from '@pragmatic-tech-ai/pragmatic-tenant-plane';
-import type { IdpConnection } from '../idp-service.js';
-import { ClientRegistry } from '../client-registry.js';
-import { TenantRegistry } from '../tenant-registry.js';
-import { HiveRegistry } from '../hive-registry.js';
-import { PlatformDirectory, RecordExistsError, UnknownClientError, UnknownTenantError } from '../platform-directory.js';
-import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, OwnerResetInProgressError, TenantIdpMissingError, TenantProvisioningService, type TenantProvisionResult } from '../tenant-provisioning-service.js';
+import type { IdpConnection } from '../../../../repos/pragmatic-platform-admin/src/idp-service.js';
+import { ClientRegistry } from '../../../../repos/pragmatic-platform-admin/src/client-registry.js';
+import { TenantRegistry } from '../../../../repos/pragmatic-platform-admin/src/tenant-registry.js';
+import { HiveRegistry } from '../../../../repos/pragmatic-platform-admin/src/hive-registry.js';
+import { PlatformDirectory, RecordExistsError, UnknownClientError, UnknownTenantError } from '../../../../repos/pragmatic-platform-admin/src/platform-directory.js';
+import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, OwnerResetInProgressError, TenantIdpMissingError, TenantProvisioningService, type TenantProvisionResult } from '../../../../repos/pragmatic-platform-admin/src/tenant-provisioning-service.js';
 import { SignedInIdentity } from '@pragmatic-tech-ai/pragmatic-app-host';
 
 class FakeIdp implements IIdpService

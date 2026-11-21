@@ -1,0 +1,29 @@
+# pragmatic-e2e CI: install from the registry, check out the pinned sibling container repositories (siblings.json),
+# typecheck and run the tests. No image: this repository releases nothing. Tests that need Docker, kind, a Postgres
+# (PRAGMATIC_TEST_PG_URL) or a browser skip here; the operator runs those where they exist.
+# A pull request from a fork gets no PACKAGES_TOKEN: its install then fails on the registry.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+      - name: Sibling repositories
+        run: npm run siblings
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test

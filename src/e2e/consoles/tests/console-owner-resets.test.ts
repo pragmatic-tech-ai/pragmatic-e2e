@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ConsoleOwnerResets } from '../console-owner-resets.js'
-import { ConsoleOwnerResetFollower, type IOwnerSessionEnder } from '../console-owner-reset-follower.js'
+import { ConsoleOwnerResets } from '../../../../repos/pragmatic-platform-admin/src/console-owner-resets.js'
+import { ConsoleOwnerResetFollower, type IOwnerSessionEnder } from '../../../../repos/pragmatic-tenant-admin/src/console-owner-reset-follower.js'
 import { TenantOwner, type OwnedTenant, TenantPrincipalSessions, type IPrincipalConnections, TenantSessionClaims, TenantSessions } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { TenantProvisioningService } from '../tenant-provisioning-service.js'
+import { TenantProvisioningService } from '../../../../repos/pragmatic-platform-admin/src/tenant-provisioning-service.js'
 import { SignedInIdentity } from '@pragmatic-tech-ai/pragmatic-app-host'
 
 class Names

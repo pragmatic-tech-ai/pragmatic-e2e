@@ -5,7 +5,7 @@
  * Requires the real `kind` CLI on PATH, a running Docker daemon, and the `pragmatic-server:dev` image
  * in the local docker image store. Run manually with:
  *
- *   npx tsx admin/control-plane/kind-hive-smoke.ts
+ *   npx tsx src/smoke/kind-hive-smoke.ts
  *
  * Stands up TWO provisioned kind clusters (distinct hives), loads the dev image onto each node (kind
  * nodes do NOT share the host docker image store), applies a throwaway dev-blank workload to each,
@@ -20,13 +20,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BundleBuilder, EnvServerSeedSource, TemplateCatalog, EnvironmentWorkloadFactory, type EnvironmentWorkload, EnvStatus, EnvType, Template, type EnvironmentRecord, EffectiveRegistry, type HiveOrchestratorFactory, type IHiveOrchestrator, KindClusterName, HiveBackend, InfraMode, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
-import { DockerImageDigest } from './image-digest.js'
+import { PlatformHiveOrchestratorFactory } from '../../repos/pragmatic-platform-admin/src/platform-hive-orchestrator-factory.js'
+import { DockerImageDigest } from '../../repos/pragmatic-platform-admin/src/image-digest.js'
 import { ImageSigner, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
-import { KindCli } from './kind.js'
-import { KindHiveOrchestrator } from './kind-hive-orchestrator.js'
+import { KindCli } from '../../repos/pragmatic-platform-admin/src/kind.js'
+import { KindHiveOrchestrator } from '../../repos/pragmatic-platform-admin/src/kind-hive-orchestrator.js'
 import { KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
-import { FileSignatureStore } from './signature-store.js'
+import { FileSignatureStore } from '../../repos/pragmatic-platform-admin/src/signature-store.js'
 
 /** One provisioned hive under test: its record, workload and resolved orchestrator. */
 class SmokeHive

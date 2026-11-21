@@ -1,0 +1,10 @@
+node_modules/
+*.tsbuildinfo
+# The sibling container repositories the cross-container tests import, checked out by `npm run siblings` (siblings.json).
+repos/
+test-results/
+playwright-report/
+# The dev stack's local TLS material, its seed output and logs (src/dev/README.md).
+src/dev/certs/
+src/dev/dev-info.txt
+src/dev/*.log

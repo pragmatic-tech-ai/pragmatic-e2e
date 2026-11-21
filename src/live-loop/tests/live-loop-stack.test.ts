@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { LiveLoopPortalBuild, LiveLoopStack, LiveLoopStackAgent, LiveLoopStackNames, LiveLoopStackSeed, type IPortalBuildRunner } from '../live-loop-stack.js'
+import { LiveLoopPortalBuild, LiveLoopServices, LiveLoopStack, LiveLoopStackAgent, LiveLoopStackNames, LiveLoopStackSeed, type IPortalBuildRunner } from '../live-loop-stack.js'
+import { RepositoryMissingError, RepositoryRoots } from '../../stack/repository-roots.js'
 import type { ApiAnswer, IOperatorApi } from '../operator-api-client.js'
 
 class FakeOperatorApi implements IOperatorApi
@@ -150,23 +153,118 @@ class RecordingBuildRunner implements IPortalBuildRunner
 
 describe('LiveLoopPortalBuild', () =>
 {
-    const AdminDir = join('D:', 'repo', 'admin')
+    const Portals = [join('D:', 'repos', 'pragmatic-platform-admin', 'portal'), join('D:', 'repos', 'pragmatic-tenant-admin', 'tenant-portal')]
 
-    it('runs npm run build in platform admin, then tenant admin', async () =>
+    it('runs npm run build in each portal folder in order', async () =>
     {
         const runner = new RecordingBuildRunner()
-        await new LiveLoopPortalBuild(runner).Build(AdminDir)
+        await new LiveLoopPortalBuild(runner).Build(Portals)
         assert.deepEqual(runner.Runs, [
-            { command: 'npm', args: ['run', 'build'], cwd: join(AdminDir, 'portal') },
-            { command: 'npm', args: ['run', 'build'], cwd: join(AdminDir, 'tenant-portal') },
+            { command: 'npm', args: ['run', 'build'], cwd: Portals[0] },
+            { command: 'npm', args: ['run', 'build'], cwd: Portals[1] },
         ])
     })
 
     it('stops at the first failed build, naming the portal and its exit code', async () =>
     {
         const runner = new RecordingBuildRunner([2])
-        await assert.rejects(new LiveLoopPortalBuild(runner).Build(AdminDir), /admin portal build failed: portal exited 2/)
+        await assert.rejects(new LiveLoopPortalBuild(runner).Build(Portals), /admin portal build failed: portal exited 2/)
         assert.equal(runner.Runs.length, 1)
+    })
+})
+
+/** A repositories folder holding empty platform-admin, platform-edge and tenant-admin checkouts. */
+class ServicesFx
+{
+    public static readonly Repositories = [LiveLoopServices.PlatformAdmin, LiveLoopServices.PlatformEdge, LiveLoopServices.TenantAdmin]
+    public static readonly DataRoot = join('S:', 'stack', 'data')
+    public static readonly UrlFile = join('S:', 'stack', 'postgres-url')
+    public static readonly SecretFile = join('S:', 'stack', 'internal-api-secret')
+
+    public static With(body: (dir: string, services: LiveLoopServices) => void): void
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'e2e-services-'))
+        try
+        {
+            for (const repo of ServicesFx.Repositories)
+            {
+                mkdirSync(join(dir, repo))
+            }
+            body(dir, new LiveLoopServices(new RepositoryRoots(dir)))
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    }
+}
+
+describe('LiveLoopServices', () =>
+{
+    const N = LiveLoopStackNames
+
+    it('builds platform admin\'s portal, then tenant admin\'s, from their repositories', () =>
+    {
+        ServicesFx.With((dir, services) =>
+        {
+            assert.deepEqual(services.PortalDirs(), [join(dir, 'pragmatic-platform-admin', 'portal'), join(dir, 'pragmatic-tenant-admin', 'tenant-portal')])
+        })
+    })
+
+    it('starts the console from pragmatic-platform-admin with its own tsx, role admin and the internal API on loopback', () =>
+    {
+        ServicesFx.With((dir, services) =>
+        {
+            const admin = join(dir, 'pragmatic-platform-admin')
+            const spec = services.Console({ KEEP: 'me' }, ServicesFx.DataRoot, ServicesFx.UrlFile, ServicesFx.SecretFile)
+            assert.equal(spec.cwd, admin)
+            assert.equal(spec.script, join('src', 'server.ts'))
+            assert.equal(spec.tsxCli, join(admin, 'node_modules', 'tsx', 'dist', 'cli.mjs'))
+            assert.equal(spec.env.KEEP, 'me')
+            assert.equal(spec.env.PRAGMATIC_CONTROL_PLANE_ROLE, 'admin')
+            assert.equal(spec.env.PRAGMATIC_ADMIN_DATA_ROOT, ServicesFx.DataRoot)
+            assert.equal(spec.env.PRAGMATIC_ADMIN_DATABASE_URL_FILE, ServicesFx.UrlFile)
+            assert.equal(spec.env.PRAGMATIC_ADMIN_PORT, String(N.OperatorPort))
+            assert.equal(spec.env.PRAGMATIC_ADMIN_INTERNAL_PORT, String(N.InternalApiPort))
+            assert.equal(spec.env.PRAGMATIC_ADMIN_INTERNAL_BIND, '127.0.0.1')
+            assert.equal(spec.env.PRAGMATIC_INTERNAL_API_SECRET_FILE, ServicesFx.SecretFile)
+            assert.equal(spec.env.PRAGMATIC_TENANT_ADMIN_PORT, String(N.TenantPlanePort))
+            assert.equal(spec.env.PRAGMATIC_TENANT_PORTAL_DIR, join(dir, 'pragmatic-tenant-admin', 'tenant-portal', 'dist'))
+            assert.equal(spec.env.PRAGMATIC_AGENT_CHANNEL_PORT, String(N.AgentChannelPort))
+        })
+    })
+
+    it('starts the edge from pragmatic-platform-edge on the agent channel, answered through the console\'s internal API', () =>
+    {
+        ServicesFx.With((dir, services) =>
+        {
+            const edge = join(dir, 'pragmatic-platform-edge')
+            const spec = services.Edge({}, ServicesFx.SecretFile)
+            assert.equal(spec.cwd, edge)
+            assert.equal(spec.script, join('src', 'bin', 'pragmatic-platform-edged.ts'))
+            assert.equal(spec.tsxCli, join(edge, 'node_modules', 'tsx', 'dist', 'cli.mjs'))
+            assert.deepEqual(spec.env, {
+                PRAGMATIC_AGENT_CHANNEL_PORT: String(N.AgentChannelPort),
+                PRAGMATIC_AGENT_CHANNEL_BIND: '0.0.0.0',
+                PRAGMATIC_EDGE_ADMIN_URL: N.InternalApiBase,
+                PRAGMATIC_INTERNAL_API_SECRET_FILE: ServicesFx.SecretFile,
+            })
+            assert.equal(N.InternalApiBase, 'http://127.0.0.1:' + String(N.InternalApiPort))
+        })
+    })
+
+    it('refuses to start a service whose repository is not checked out, naming it', () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'e2e-services-'))
+        try
+        {
+            const services = new LiveLoopServices(new RepositoryRoots(dir))
+            assert.throws(() => services.Edge({}, ServicesFx.SecretFile), (err: unknown) => err instanceof RepositoryMissingError && err.message.includes('pragmatic-platform-edge'))
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
     })
 })
 

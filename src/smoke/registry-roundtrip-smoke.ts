@@ -5,7 +5,7 @@
  * Requires on PATH: `docker`, `kind`, `kubectl`, a running Docker daemon, the registry node port (InClusterRegistry.NodePort) free, and network access to pull
  * `registry:2` and `curlimages/curl`. Run with:
  *
- *   npx tsx admin/control-plane/registry-roundtrip-smoke.ts
+ *   npx tsx src/smoke/registry-roundtrip-smoke.ts
  *
  * Steps: (1) create a kind cluster with an extraPortMapping for InClusterRegistry.NodePort and load registry:2; (2) apply the rendered registry manifest
  * and wait for the Deployment; (3) from the host, GET /v2/ and push + pull a blob through the node port; (4) from a throwaway
@@ -14,7 +14,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { InClusterRegistry, K8sManifestBuilder } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { KindCli } from './kind.js'
+import { KindCli } from '../../repos/pragmatic-platform-admin/src/kind.js'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 
 export class RegistryRoundtripSmoke

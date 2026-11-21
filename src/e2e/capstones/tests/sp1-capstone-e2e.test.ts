@@ -23,7 +23,7 @@ import {
 import type { MessageConnection, SecurityModelDto, AppWriteOpDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { BaseRole, PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/pragmatic-identity'
 import { BundleBuilder, EnvKind, EnvironmentPurposeName } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { Sp1AppBuilder, type BuiltSp1App } from './sp1-app-builder.js'
+import { Sp1AppBuilder, type BuiltSp1App } from '../sp1-app-builder.js'
 
 /** Opt-in gate for the SP1 capstone e2e (needs Docker + the pragmatic-server:sp1 image + a Playwright chromium). */
 class Gate
@@ -161,7 +161,7 @@ class RuntimeEnvironment
     private static readonly OkStatus = 200
     private static readonly HealthTimeoutMs = 120000
     private static readonly HealthPollMs = 1000
-    private static readonly ImageMissing = 'the pragmatic-server:sp1 image is absent: build it first (DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<npmrc> -t pragmatic-server:sp1 .)'
+    private static readonly ImageMissing = 'the pragmatic-server:sp1 image is absent: build it first (docker/Dockerfile of pragmatic-env-server, tagged pragmatic-server:sp1)'
     private static readonly HealthNeverReady = 'the runtime environment container never reported /healthz=200'
     private static readonly PortEnv = 'PRAGMATIC_PORT=8080'
     private static readonly BaseDirEnv = 'PRAGMATIC_BASE_DIR=/home/pragmatic/data'

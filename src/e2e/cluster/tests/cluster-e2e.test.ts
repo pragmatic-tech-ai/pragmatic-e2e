@@ -8,10 +8,12 @@ import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/pragm
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticCluster } from '../pragmatic-cluster.js'
-import type { WorkerHost } from '../worker-host.js'
+import type { WorkerHost } from '../../../../repos/pragmatic-env-server/server/src/cluster/worker-host.js'
 import type { MachineTlsRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
-import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
-import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../../../repos/pragmatic-env-server/server/src/environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../../../repos/pragmatic-env-server/server/src/environments/environment-provisioning.js'
+import { SiblingCheckouts } from '../../../stack/sibling-checkouts.js'
+import { ClusterFixtures } from './cluster-fixtures.js'
 
 class ClusterFixture
 {
@@ -20,14 +22,14 @@ class ClusterFixture
 
     public static TlsRef(): MachineTlsRef
     {
-        const dir = join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'tls')
+        const dir = SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'tls')
         return { certFile: join(dir, 'server.pem'), keyFile: join(dir, 'server.key'), caFile: join(dir, 'ca.pem') }
     }
 
     public static Start(...environmentIds: string[]): { baseDir: string }
     {
         const baseDir = mkdtempSync(join(tmpdir(), 'ps-cl-'))
-        const fixture = join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution')
+        const fixture = SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'sample-solution')
         for (const id of environmentIds)
         {
             mkdirSync(join(baseDir, id), { recursive: true })

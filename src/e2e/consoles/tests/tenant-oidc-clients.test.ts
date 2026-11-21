@@ -13,14 +13,14 @@ import { InMemoryOidcFlowStateStore } from '@pragmatic-tech-ai/pragmatic-identit
 import { PgSession, type SqlSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
 import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity'
-import { TenantIdpTestHost } from '../../../src/idp/tests/tenant-idp-test-host.js'
+import { TenantIdpTestHost } from '../../../../repos/pragmatic-tenant-idp/src/tests/tenant-idp-test-host.js'
 import { IdpAdminClient, type IdpAdminClientOptions, type IdpAdminClientRegistration, type IIdpService, type EnvironmentRecord, TenantAdminClientRegistry, TenantOidcClientKind, TenantOidcClients, UnknownTenantHostError, type ITenantCallbacks, type TenantOidcClientSecrets, TenantSessionClaims } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import type { IdpConnection } from '../idp-service.js'
-import { PlatformDirectory, type IEnvironmentLookup } from '../platform-directory.js'
-import { ClientRegistry } from '../client-registry.js'
-import { TenantRegistry } from '../tenant-registry.js'
-import { HiveRegistry } from '../hive-registry.js'
-import { TenantAdminDatabase, TenantAdminRegistry } from '../tenant-admin-database.js'
+import type { IdpConnection } from '../../../../repos/pragmatic-platform-admin/src/idp-service.js'
+import { PlatformDirectory, type IEnvironmentLookup } from '../../../../repos/pragmatic-platform-admin/src/platform-directory.js'
+import { ClientRegistry } from '../../../../repos/pragmatic-platform-admin/src/client-registry.js'
+import { TenantRegistry } from '../../../../repos/pragmatic-platform-admin/src/tenant-registry.js'
+import { HiveRegistry } from '../../../../repos/pragmatic-platform-admin/src/hive-registry.js'
+import { TenantAdminDatabase, TenantAdminRegistry } from '../../../../repos/pragmatic-tenant-admin/src/tenant-admin-database.js'
 
 /** A raw user-agent exchange result; redirects are read, never followed. */
 class BrowserResponse

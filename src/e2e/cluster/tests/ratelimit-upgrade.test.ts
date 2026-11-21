@@ -5,11 +5,13 @@ import { mkdtempSync, cpSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
-import { Gateway } from '../gateway.js'
-import { WorkerHost } from '../worker-host.js'
+import { Gateway } from '../../../../repos/pragmatic-env-gateway/src/cluster/gateway.js'
+import { WorkerHost } from '../../../../repos/pragmatic-env-server/server/src/cluster/worker-host.js'
 import { MachineTls, type MachineTlsRef, RateLimitGuard, TokenBucketRateLimiter, type IWorkerRouter, type WorkerEndpoint } from '@pragmatic-tech-ai/pragmatic-env-cluster'
-import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
-import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../../../repos/pragmatic-env-server/server/src/environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../../../repos/pragmatic-env-server/server/src/environments/environment-provisioning.js'
+import { SiblingCheckouts } from '../../../stack/sibling-checkouts.js'
+import { ClusterFixtures } from './cluster-fixtures.js'
 
 class CountingRouter implements IWorkerRouter
 {
@@ -33,7 +35,7 @@ class Fixtures
 
     private static TlsDir(): string
     {
-        return join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'tls')
+        return SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'tls')
     }
 
     public static ServerTls(): MachineTlsRef
@@ -97,7 +99,7 @@ test('the worker host rejects a per-environment upgrade breach with 429 + Retry-
 {
     const baseDir = mkdtempSync(join(tmpdir(), 'ps-wh-rl-'))
     mkdirSync(join(baseDir, 't1'), { recursive: true })
-    cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), join(baseDir, 't1', 'solution'), { recursive: true })
+    cpSync(SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'sample-solution'), join(baseDir, 't1', 'solution'), { recursive: true })
     process.env[Fixtures.KeyEnv] = randomBytes(32).toString('base64')
     const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 't1' }]])
     const worker = await WorkerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: Fixtures.KeyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries), tls: Fixtures.ServerTls(), rateLimit: Fixtures.Guard() })

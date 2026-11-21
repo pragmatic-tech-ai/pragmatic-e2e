@@ -1,7 +1,7 @@
 /**
  * GATED live smoke for the Plexus desktop sign-in + relay surface. NOT a *.test.ts and NOT in any test glob.
  *
- *   npx tsx admin/control-plane/desktop-sign-in-smoke.ts [--owner-password-file PATH] [--cluster]
+ *   npx tsx src/smoke/desktop-sign-in-smoke.ts [--owner-password-file PATH] [--cluster]
  *
  * Part (a), always: HTTP checks against a RUNNING control plane (operator listener http://localhost:7000, tenant plane
  * http://127.0.0.1:7002; override with PRAGMATIC_SMOKE_OPERATOR_URL / PRAGMATIC_SMOKE_TENANT_URL): desktop discovery
@@ -19,22 +19,22 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { request } from 'node:http'
 import { createServer, type AddressInfo } from 'node:net'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { DockerEnv } from '../../environments/seed/docker.js'
+import { DevStackFolders } from '../dev/dev-stack-folders.js'
+import { DockerEnv } from '../../repos/pragmatic-platform-admin/src/environments/seed/docker.js'
 import { UserSeeder, AdminProxy, WsAdminConnector, ClusterTunnelPool, BundleBuilderAdapter, UserSeederAdapter, EnvironmentEndpoints, EnvironmentPlacement, EnvironmentRegistry, EnvironmentRuntimeResolver, DockerEnvironmentRuntime, EnvironmentService, IdpAdminClient, InClusterEnvironmentRuntime, NetPortProbe, PortAllocator } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { ClientRegistry } from './client-registry.js'
-import { DockerEnvAdapter } from './docker-env-port.js'
-import { DockerIdpDriver } from './docker-idp-driver.js'
-import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
-import { HiveRegistry } from './hive-registry.js'
-import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
-import { IdpRegistry } from './idp-registry.js'
-import { IdpService } from './idp-service.js'
+import { ClientRegistry } from '../../repos/pragmatic-platform-admin/src/client-registry.js'
+import { DockerEnvAdapter } from '../../repos/pragmatic-platform-admin/src/docker-env-port.js'
+import { DockerIdpDriver } from '../../repos/pragmatic-platform-admin/src/docker-idp-driver.js'
+import { PlatformHiveOrchestratorFactory } from '../../repos/pragmatic-platform-admin/src/platform-hive-orchestrator-factory.js'
+import { HiveRegistry } from '../../repos/pragmatic-platform-admin/src/hive-registry.js'
+import { ExecFileDockerExec, IdpContainerEnv } from '../../repos/pragmatic-platform-admin/src/idp-container-env.js'
+import { IdpRegistry } from '../../repos/pragmatic-platform-admin/src/idp-registry.js'
+import { IdpService } from '../../repos/pragmatic-platform-admin/src/idp-service.js'
 import { NodeProcessSpawner } from '@pragmatic-tech-ai/pragmatic-kube'
-import { PlatformDirectory } from './platform-directory.js'
-import { TenantRegistry } from './tenant-registry.js'
+import { PlatformDirectory } from '../../repos/pragmatic-platform-admin/src/platform-directory.js'
+import { TenantRegistry } from '../../repos/pragmatic-platform-admin/src/tenant-registry.js'
 
 type HttpResult = { status: number; body: string; location?: string }
 
@@ -47,7 +47,6 @@ export class DesktopSignInSmoke
     private static readonly DefaultTenantUrl = 'http://127.0.0.1:7002'
     private static readonly PasswordFileFlag = '--owner-password-file'
     private static readonly ClusterFlag = '--cluster'
-    private static readonly DataDir = 'data'
     private static readonly TenantsFile = 'tenants.json'
     private static readonly RegistryFile = 'registry.json'
     private static readonly ClientsFile = 'clients.json'
@@ -151,7 +150,7 @@ export class DesktopSignInSmoke
     private failures = 0
     private readonly operatorUrl = process.env[DesktopSignInSmoke.OperatorUrlEnv] ?? DesktopSignInSmoke.DefaultOperatorUrl
     private readonly tenantUrl = process.env[DesktopSignInSmoke.TenantUrlEnv] ?? DesktopSignInSmoke.DefaultTenantUrl
-    private readonly dataRoot = join(dirname(fileURLToPath(import.meta.url)), DesktopSignInSmoke.DataDir)
+    private readonly dataRoot = DevStackFolders.DataRoot(process.env)
 
     public static async Main(argv: readonly string[]): Promise<void>
     {

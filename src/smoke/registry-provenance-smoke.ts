@@ -4,7 +4,7 @@
  * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster), docker, and the
  * `pragmatic-server:dev` image in the local docker image store. Run with:
  *
- *   npx tsx admin/control-plane/registry-provenance-smoke.ts
+ *   npx tsx src/smoke/registry-provenance-smoke.ts
  *
  * Starts a real `registry:2` container, pushes the image to it, signs the image digest with a
  * throwaway dev Ed25519 key, then drives a real KubectlHiveOrchestrator (provision-registry hive):
@@ -18,10 +18,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BundleBuilder, EnvServerSeedSource, TemplateCatalog, EnvironmentWorkloadFactory, type EnvironmentWorkload, type IHiveOrchestrator, EnvStatus, EnvType, Template, type EnvironmentRecord, EffectiveRegistry, K8sManifestBuilder, KubectlHiveOrchestrator, HiveBackend, InfraMode, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { DockerImageDigest } from './image-digest.js'
+import { DockerImageDigest } from '../../repos/pragmatic-platform-admin/src/image-digest.js'
 import { ImageSigner, CryptoImageVerifier, ImageVerificationError, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
-import { FileSignatureStore } from './signature-store.js'
+import { FileSignatureStore } from '../../repos/pragmatic-platform-admin/src/signature-store.js'
 
 export class RegistryProvenanceSmoke
 {

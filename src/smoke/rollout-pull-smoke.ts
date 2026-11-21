@@ -3,9 +3,9 @@
  *
  * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster), docker, and a
  * `pragmatic-server:dev` image built AFTER the pull agent landed (it must contain
- * `dist/bin/pragmatic-agentd.js`; rebuild with the invocation in docker/Dockerfile's header). Run with:
+ * `dist/bin/pragmatic-agentd.js`; rebuild with the invocation in pragmatic-env-server's docker/Dockerfile header). Run with:
  *
- *   npx tsx admin/control-plane/rollout-pull-smoke.ts
+ *   npx tsx src/smoke/rollout-pull-smoke.ts
  *
  * Brings an environment up on v1, deploys the single per-hive agent (pragmatic-system Namespace/SA/ClusterRole/
  * ClusterRoleBinding/Deployment + a token Secret) pointed at a locally served AgentChannelHost (reachable from the
@@ -20,22 +20,22 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AgentChannelHost } from '@pragmatic-tech-ai/pragmatic-platform-link'
-import { LocalAgentChannelBackend } from './local-agent-channel-backend.js'
+import { LocalAgentChannelBackend } from '../../repos/pragmatic-platform-admin/src/local-agent-channel-backend.js'
 import { BundleBuilder, EnvServerSeedSource, TemplateCatalog, EnvironmentPlacement, EnvironmentRegistry, EnvStatus, EnvType, Template, type EnvironmentRecord, type IContainerProbe, type EnvironmentWorkload, UnsupportedBackendError, type IHiveOrchestrator, K8sManifestBuilder, ManifestRegistry, HiveBackend, InfraMode, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { ClientRegistry } from './client-registry.js'
-import { GatingRegistry } from './gating-record.js'
-import { HiveObservationRegistry } from './hive-observation-record.js'
-import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
-import { HiveRegistry } from './hive-registry.js'
-import { DockerImageDigest } from './image-digest.js'
+import { ClientRegistry } from '../../repos/pragmatic-platform-admin/src/client-registry.js'
+import { GatingRegistry } from '../../repos/pragmatic-platform-admin/src/gating-record.js'
+import { HiveObservationRegistry } from '../../repos/pragmatic-platform-admin/src/hive-observation-record.js'
+import { PlatformHiveOrchestratorFactory } from '../../repos/pragmatic-platform-admin/src/platform-hive-orchestrator-factory.js'
+import { HiveRegistry } from '../../repos/pragmatic-platform-admin/src/hive-registry.js'
+import { DockerImageDigest } from '../../repos/pragmatic-platform-admin/src/image-digest.js'
 import { ImageSigner, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
-import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
-import { PlatformDirectory } from './platform-directory.js'
-import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
-import { SelectionRegistry } from './selection-record.js'
-import { FileSignatureStore } from './signature-store.js'
-import { TenantRegistry } from './tenant-registry.js'
+import { PlatformDeploymentRegistry } from '../../repos/pragmatic-platform-admin/src/platform-deployment-registry.js'
+import { PlatformDirectory } from '../../repos/pragmatic-platform-admin/src/platform-directory.js'
+import { RolloutRegistrationRegistry } from '../../repos/pragmatic-platform-admin/src/rollout-registration-record.js'
+import { SelectionRegistry } from '../../repos/pragmatic-platform-admin/src/selection-record.js'
+import { FileSignatureStore } from '../../repos/pragmatic-platform-admin/src/signature-store.js'
+import { TenantRegistry } from '../../repos/pragmatic-platform-admin/src/tenant-registry.js'
 
 /** The smoke never reconciles against docker, so no container is ever reported running. */
 class NoContainerProbe implements IContainerProbe

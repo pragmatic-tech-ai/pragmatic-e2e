@@ -1,8 +1,8 @@
 import { type MasterKeyRef, type MachineTlsRef, type DeploymentMode, type AdapterPacksConfig, type WebSocketAddress, InMemoryWorkerRouter, type IWorkerRouter } from '@pragmatic-tech-ai/pragmatic-env-cluster'
-import type { IEnvironmentProvisioning } from '../environments/environment-provisioning.js'
-import { WorkerHost } from './worker-host.js'
-import { Gateway } from './gateway.js'
-import type { PlatformServices } from '../platform/platform-services.js'
+import type { IEnvironmentProvisioning } from '../../../repos/pragmatic-env-server/server/src/environments/environment-provisioning.js'
+import { WorkerHost } from '../../../repos/pragmatic-env-server/server/src/cluster/worker-host.js'
+import { Gateway } from '../../../repos/pragmatic-env-gateway/src/cluster/gateway.js'
+import type { PlatformServices } from '../../../repos/pragmatic-env-server/server/src/platform/platform-services.js'
 
 export interface ClusterOptions
 {

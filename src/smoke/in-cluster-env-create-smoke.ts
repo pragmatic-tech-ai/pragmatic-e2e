@@ -3,7 +3,7 @@
  * path. NOT part of `tsx --test`. Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster) and the
  * `pragmatic-server:dev` image in the node's image store. Run with:
  *
- *   npx tsx admin/control-plane/in-cluster-env-create-smoke.ts
+ *   npx tsx src/smoke/in-cluster-env-create-smoke.ts
  *
  * Drives the REAL EnvironmentService in-process, wired as the standalone TenantAdminServer wires it
  * (EnvironmentRuntimeResolver -> InClusterEnvironmentRuntime, real HiveOrchestratorFactory, real
@@ -35,15 +35,15 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { BundleBuilder, NorthwindApp, UserSeeder, AdminProxy, WsAdminConnector, BundleBuilderAdapter, UserSeederAdapter, EffectiveRegistry, EnvironmentDtoMapper, EnvironmentPlacement, EnvironmentRegistry, EnvStatus, EnvType, Template, type EnvironmentRecord, DockerEnvironmentRuntime, EnvironmentRuntimeResolver, EnvironmentService, type EnvironmentWorkload, HiveHealthProducer, type HiveOrchestratorFactory, InClusterEnvironmentRuntime, type IdpAdminClient, type IIdpService, K8sManifestBuilder, NetPortProbe, PortAllocator, HiveBackend, InfraMode, type HiveRecord, type TenantRecord, TenantEventBus, TenantHealthMonitor } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { DockerEnv } from '../../environments/seed/docker.js'
-import { DockerEnvAdapter } from './docker-env-port.js'
-import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
-import { DockerImageDigest } from './image-digest.js'
+import { DockerEnv } from '../../repos/pragmatic-platform-admin/src/environments/seed/docker.js'
+import { DockerEnvAdapter } from '../../repos/pragmatic-platform-admin/src/docker-env-port.js'
+import { PlatformHiveOrchestratorFactory } from '../../repos/pragmatic-platform-admin/src/platform-hive-orchestrator-factory.js'
+import { DockerImageDigest } from '../../repos/pragmatic-platform-admin/src/image-digest.js'
 import { ImageSigner, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
-import type { IdpConnection } from './idp-service.js'
+import type { IdpConnection } from '../../repos/pragmatic-platform-admin/src/idp-service.js'
 import { KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
-import { FileSignatureStore } from './signature-store.js'
-import { SeededTenantDirectory } from './tenant-api/seeded-tenant-directory.js'
+import { FileSignatureStore } from '../../repos/pragmatic-platform-admin/src/signature-store.js'
+import { SeededTenantDirectory } from '../../repos/pragmatic-tenant-admin/src/tenant-api/seeded-tenant-directory.js'
 
 /**
  * In-cluster create does NOT federate (per-env OIDC federation is deferred in-cluster), so no IdP is contacted. This

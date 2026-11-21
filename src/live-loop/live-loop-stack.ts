@@ -4,30 +4,36 @@
  *
  *   - a kind cluster `pragmatic-e2e` (host ports 443 and the in-cluster registry's node port mapped, ingress-nginx with SSL
  *     passthrough, the server, registry and Postgres images loaded);
- *   - both admin portals (platform admin, tenant admin) rebuilt, since the control plane serves their `dist` folders;
- *   - a control plane on :7000 (operator), :7100 (tenant plane) and :7001 (agent channel) whose state lives in
- *     ~/.pragmatic/e2e-stack/data, never in admin/control-plane/data;
+ *   - both admin portals rebuilt (pragmatic-platform-admin's `portal`, pragmatic-tenant-admin's `tenant-portal`), since the
+ *     console serves their `dist` folders;
+ *   - the platform admin console (role `admin`) on :7000 (operator), :7100 (tenant plane) and :7002 (internal API, loopback),
+ *     started from pragmatic-platform-admin's source, its state in ~/.pragmatic/e2e-stack/data;
+ *   - the platform edge on :7001 (agent channel), started from pragmatic-platform-edge's source, answering through the
+ *     console's internal API (a shared secret in an owner-only file of the stack folder);
  *   - client `e2e-client`, tenant `e2e` (owner `o@t.io`, its IdP container) and hive `e2e-hive` attached to the kind cluster,
  *     with its agent installed (as the operator's install button does) and checked in;
- *   - the owner's one-time password replaced by the short test password, through the tenant plane as the owner would.
+ *   - one owner sign-in through the tenant plane, as the owner would; the one-time password stays the owner's.
  *
  * `up` writes ~/.pragmatic/e2e-stack/stack.json (addresses, emails, password FILE paths, the IdP CA file) for the live-loop
  * orchestrator and the Plexus spec; `down` stops the control plane, removes the IdP container and volume, deletes the kind
  * cluster and the stack folder. Passwords are written to files in the stack folder only: never printed or logged.
  *
- *   npx tsx admin/control-plane/live-loop/live-loop-stack.ts up|down
+ *   npx tsx src/live-loop/live-loop-stack.ts up|down
  *
- * Requires docker, kind and kubectl on PATH, a FRESH `pragmatic-server:dev` image, free host ports 443, 30500, 7000, 7001 and 7100, and
- * the Playwright Chromium browser.
+ * The services run from the sibling checkouts under PRAGMATIC_E2E_REPOS_DIR (default: the folder this repository sits in),
+ * each with its own `npm ci` done: pragmatic-platform-admin, pragmatic-platform-edge and pragmatic-tenant-admin (for its
+ * portal). Requires docker, kind and kubectl on PATH, a FRESH `pragmatic-server:dev` image (pragmatic-env-server's
+ * `docker/Dockerfile`), free host ports 443, 30500, 7000, 7001, 7002 and 7100, and the Playwright Chromium browser.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { InClusterRegistry, NetPortProbe } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { KindCli } from '../kind.js'
+import { RepositoryRoots } from '../stack/repository-roots.js'
+import { KindCli } from '../../repos/pragmatic-platform-admin/src/kind.js'
 import { NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 import { ProcessTree } from './process-tree.js'
 import { type IOperatorApi, OperatorApiClient } from './operator-api-client.js'
@@ -67,6 +73,10 @@ export class LiveLoopStackNames
     public static readonly TenantPlanePort = 7100
     /** The agent channel the hive agent dials home to; its pods reach this machine at http://host.docker.internal:<port>. */
     public static readonly AgentChannelPort = 7001
+    /** The console's internal API the edge answers through (loopback only). */
+    public static readonly InternalApiPort = 7002
+    public static readonly InternalApiBase = 'http://127.0.0.1:7002'
+    public static readonly EdgeBase = 'http://127.0.0.1:7001'
     public static readonly TenantBaseDomain = 'lvh.me'
     public static readonly PlatformAddress = 'http://localhost:7000'
     public static readonly OperatorBase = 'http://127.0.0.1:7000'
@@ -229,14 +239,12 @@ export class ShellPortalBuildRunner implements IPortalBuildRunner
 }
 
 /**
- * Rebuilds the two admin portals before the control plane starts. The control plane serves them from their `dist`
- * folders, so without this a stack serves whatever was last built (on 2026-11-14 a three-day-old tenant admin without
- * the catalog-backed roles editor).
+ * Rebuilds the two admin portals before the console starts. The console serves them from their `dist` folders, so
+ * without this a stack serves whatever was last built (on 2026-11-14 a three-day-old tenant admin without the
+ * catalog-backed roles editor).
  */
 export class LiveLoopPortalBuild
 {
-    /** The portal folders under `admin/`, platform admin first. */
-    public static readonly Portals: readonly string[] = ['portal', 'tenant-portal']
     private static readonly Npm = 'npm'
     private static readonly BuildArgs: readonly string[] = ['run', 'build']
     private static readonly FailedPrefix = 'admin portal build failed: '
@@ -246,17 +254,117 @@ export class LiveLoopPortalBuild
     {
     }
 
-    /** Builds every portal under `adminDir` in order; the first failure stops it, naming the portal and the exit code. */
-    public async Build(adminDir: string): Promise<void>
+    /** Builds each portal folder in order; the first failure stops it, naming the portal folder and the exit code. */
+    public async Build(portalDirs: readonly string[]): Promise<void>
     {
         const P = LiveLoopPortalBuild
-        for (const portal of P.Portals)
+        for (const dir of portalDirs)
         {
-            const code = await this.runner.Run(P.Npm, P.BuildArgs, join(adminDir, portal))
+            const code = await this.runner.Run(P.Npm, P.BuildArgs, dir)
             if (code !== 0)
             {
-                throw new Error(P.FailedPrefix + portal + P.ExitWord + String(code))
+                throw new Error(P.FailedPrefix + basename(dir) + P.ExitWord + String(code))
             }
+        }
+    }
+}
+
+/** How one stack service starts: a script of its repository run by that repository's own `tsx`. */
+export interface LiveLoopServiceSpec
+{
+    /** The script, relative to the repository root. */
+    script: string
+    /** The repository root (the working directory). */
+    cwd: string
+    /** That repository's tsx CLI. */
+    tsxCli: string
+    env: NodeJS.ProcessEnv
+}
+
+/**
+ * The services the stack starts, each from its own repository (RepositoryRoots): the platform admin console (role
+ * `admin`, with its internal API on loopback) and the platform edge (the agent channel the hive agent dials home to),
+ * which answers through that internal API with the shared secret file.
+ */
+export class LiveLoopServices
+{
+    public static readonly PlatformAdmin = 'pragmatic-platform-admin'
+    public static readonly PlatformEdge = 'pragmatic-platform-edge'
+    public static readonly TenantAdmin = 'pragmatic-tenant-admin'
+    public static readonly ConsoleScript = join('src', 'server.ts')
+    public static readonly EdgeScript = join('src', 'bin', 'pragmatic-platform-edged.ts')
+    public static readonly TsxCliRelative: readonly string[] = ['node_modules', 'tsx', 'dist', 'cli.mjs']
+    public static readonly PortalDir = 'portal'
+    public static readonly TenantPortalDir = 'tenant-portal'
+    public static readonly DistDir = 'dist'
+    public static readonly AdminRole = 'admin'
+    public static readonly LoopbackBind = '127.0.0.1'
+    public static readonly AnyBind = '0.0.0.0'
+    private static readonly FalseValue = 'false'
+    private static readonly HttpScheme = 'http'
+
+    public constructor(private readonly roots: RepositoryRoots)
+    {
+    }
+
+    /** The portal folders the stack rebuilds, platform admin first. */
+    public PortalDirs(): readonly string[]
+    {
+        const S = LiveLoopServices
+        return [join(this.roots.Of(S.PlatformAdmin), S.PortalDir), join(this.roots.Of(S.TenantAdmin), S.TenantPortalDir)]
+    }
+
+    /** The console: operator :7000, tenant plane :7100 (serving pragmatic-tenant-admin's portal), internal API :7002. */
+    public Console(base: NodeJS.ProcessEnv, dataRoot: string, databaseUrlFile: string, internalSecretFile: string): LiveLoopServiceSpec
+    {
+        const S = LiveLoopServices
+        const N = LiveLoopStackNames
+        const root = this.roots.Of(S.PlatformAdmin)
+        return {
+            script: S.ConsoleScript,
+            cwd: root,
+            tsxCli: join(root, ...S.TsxCliRelative),
+            env: {
+                ...base,
+                ...LiveLoopStack.ReleaseEnv(base),
+                PRAGMATIC_CONTROL_PLANE_ROLE: S.AdminRole,
+                PRAGMATIC_ADMIN_DATA_ROOT: dataRoot,
+                PRAGMATIC_ADMIN_DATABASE_URL_FILE: databaseUrlFile,
+                PRAGMATIC_ADMIN_PORT: String(N.OperatorPort),
+                PRAGMATIC_ADMIN_OPERATOR_EMAIL: N.OperatorEmail,
+                PRAGMATIC_ADMIN_OPERATOR_PASSWORD: N.OperatorPassword,
+                PRAGMATIC_ADMIN_SECURE_COOKIE: S.FalseValue,
+                PRAGMATIC_ADMIN_INTERNAL_PORT: String(N.InternalApiPort),
+                PRAGMATIC_ADMIN_INTERNAL_BIND: S.LoopbackBind,
+                PRAGMATIC_INTERNAL_API_SECRET_FILE: internalSecretFile,
+                PRAGMATIC_TENANT_ADMIN_PORT: String(N.TenantPlanePort),
+                PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: N.TenantBaseDomain,
+                PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME: S.HttpScheme,
+                PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT: String(N.TenantPlanePort),
+                PRAGMATIC_TENANT_PORTAL_DIR: join(this.roots.Of(S.TenantAdmin), S.TenantPortalDir, S.DistDir),
+                // The console does not listen on the agent channel (the edge does); it still names it in hive bundles.
+                PRAGMATIC_AGENT_CHANNEL_PORT: String(N.AgentChannelPort),
+            },
+        }
+    }
+
+    /** The edge: the agent channel on :7001 (all addresses, so the kind pods reach it), answered through the internal API. */
+    public Edge(base: NodeJS.ProcessEnv, internalSecretFile: string): LiveLoopServiceSpec
+    {
+        const S = LiveLoopServices
+        const N = LiveLoopStackNames
+        const root = this.roots.Of(S.PlatformEdge)
+        return {
+            script: S.EdgeScript,
+            cwd: root,
+            tsxCli: join(root, ...S.TsxCliRelative),
+            env: {
+                ...base,
+                PRAGMATIC_AGENT_CHANNEL_PORT: String(N.AgentChannelPort),
+                PRAGMATIC_AGENT_CHANNEL_BIND: S.AnyBind,
+                PRAGMATIC_EDGE_ADMIN_URL: N.InternalApiBase,
+                PRAGMATIC_INTERNAL_API_SECRET_FILE: internalSecretFile,
+            },
         }
     }
 }
@@ -300,8 +408,6 @@ export class LiveLoopStack
     private static readonly SelectorFlag = '--selector='
     private static readonly WaitTimeout = '--timeout=300s'
     private static readonly AppendFlag = 'a'
-    private static readonly FalseValue = 'false'
-    private static readonly HttpScheme = 'http'
     /** The console's own Postgres for the stack (A5): a throwaway container on host loopback, removed with its volume by down. */
     private static readonly ConsolePostgresImage = 'postgres:17.12-trixie'
     private static readonly ConsolePostgresContainer = 'pragmatic-e2e-postgres'
@@ -316,6 +422,7 @@ export class LiveLoopStack
     private static readonly ConsolePostgresUrlFileName = 'postgres-url'
     private static readonly ConsolePostgresNotReadyMessage = 'the console Postgres did not become ready in time'
     private static readonly PasswordBytes = 24
+    private static readonly InternalSecretBytes = 32
     private static readonly HexEncoding = 'hex'
     private static readonly RunVerb = 'run'
     private static readonly DetachFlag = '-d'
@@ -328,17 +435,17 @@ export class LiveLoopStack
     private static readonly DataDirName = 'data'
     private static readonly LogFileName = 'control-plane.log'
     private static readonly PidFileName = 'control-plane.pid'
+    private static readonly EdgeLogFileName = 'edge.log'
+    private static readonly EdgePidFileName = 'edge.pid'
+    private static readonly InternalSecretFileName = 'internal-api-secret'
     private static readonly OwnerPasswordFileName = 'owner-password'
     private static readonly OperatorPasswordFileName = 'operator-password'
     private static readonly IdpTlsRelative = ['idp', LiveLoopStackNames.TenantId, 'tls']
     private static readonly IdpCaFileName = 'ca.crt'
     private static readonly IdpCertFileName = 'server.crt'
     private static readonly BrowserLogin = 'browser'
-    private static readonly ServerScript = 'server.ts'
-    /** `admin/`, from this file's folder (admin/control-plane/live-loop). */
-    private static readonly AdminDirRelative = join('..', '..')
-    private static readonly TsxCliRelative = ['..', '..', '..', 'node_modules', 'tsx', 'dist', 'cli.mjs']
     private static readonly PingPath = '/api/ping'
+    private static readonly HealthzPath = '/healthz'
     private static readonly PingDeadlineMs = 180_000
     private static readonly PollMs = 2_000
     private static readonly Utf8 = 'utf8'
@@ -351,6 +458,8 @@ export class LiveLoopStack
     private static readonly PortBusyPrefix = 'port '
     private static readonly PortBusySuffix = ' is in use (is another control plane, e.g. dev-up.sh, running?); stop it before bringing the e2e stack up'
     private static readonly ExitedMessage = 'the control plane exited during start; see the log in the stack folder'
+    private static readonly EdgeExitedMessage = 'the platform edge exited during start; see edge.log in the stack folder'
+    private static readonly EdgeNotReadyMessage = 'the platform edge did not answer /healthz in time; see edge.log in the stack folder'
     private static readonly AlreadyUpMessage = 'the e2e stack is already up (stack.json exists); run down first'
     private static readonly NotReadyMessage = 'the control plane did not answer /api/ping in time; see the log in the stack folder'
     private static readonly Steps = {
@@ -358,7 +467,8 @@ export class LiveLoopStack
         Ingress: '[stack] ingress-nginx with SSL passthrough',
         Portals: '[stack] admin portals rebuilt (platform admin, tenant admin)',
         Postgres: '[stack] the console Postgres on 127.0.0.1:55434 (container pragmatic-e2e-postgres)',
-        ControlPlane: '[stack] control plane on :7000 / :7100, agent channel :7001 (records in its Postgres, files in the stack folder)',
+        ControlPlane: '[stack] platform admin console on :7000 / :7100, internal API :7002 (records in its Postgres, files in the stack folder)',
+        Edge: '[stack] platform edge: agent channel :7001, answered through the internal API of the console',
         Seed: '[stack] operator seed: client, tenant e2e (IdP), hive e2e-hive',
         Agent: '[stack] hive agent install; the hive checks in over the agent channel on :7001',
         Owner: '[stack] owner sign-in and short test password',
@@ -369,6 +479,12 @@ export class LiveLoopStack
     private readonly exec = new NodeExecFile()
     private readonly secrets: string[] = [LiveLoopStackNames.OperatorPassword]
     private readonly kind = new KindCli(new NodeExecFile(), new NodeExecFile(KindCli.ImageLoadTimeoutMs))
+    private readonly services: LiveLoopServices
+
+    public constructor(roots: RepositoryRoots = RepositoryRoots.FromEnvironment(process.env))
+    {
+        this.services = new LiveLoopServices(roots)
+    }
 
     public static async Main(): Promise<void>
     {
@@ -455,7 +571,7 @@ export class LiveLoopStack
         await this.Kubectl([L.WaitVerb, L.NamespaceFlag, L.IngressNamespace, L.ReadyCondition, L.PodKind, L.SelectorFlag + L.ControllerSelector, L.WaitTimeout])
 
         console.log(L.Steps.Portals)
-        await new LiveLoopPortalBuild().Build(resolve(dirname(fileURLToPath(import.meta.url)), L.AdminDirRelative))
+        await new LiveLoopPortalBuild().Build(this.services.PortalDirs())
 
         console.log(L.Steps.ControlPlane)
         const operatorPasswordFile = join(N.StackDir, L.OperatorPasswordFileName)
@@ -463,7 +579,10 @@ export class LiveLoopStack
         await this.RequireFreePorts()
         console.log(L.Steps.Postgres)
         const databaseUrlFile = await this.StartConsolePostgres()
-        await this.WaitForPing(this.StartControlPlane(dataRoot, databaseUrlFile))
+        const internalSecretFile = this.WriteInternalSecret()
+        await this.WaitForPing(this.StartService(this.services.Console(process.env, dataRoot, databaseUrlFile, internalSecretFile), L.LogFileName, L.PidFileName))
+        console.log(L.Steps.Edge)
+        await this.WaitForEdge(this.StartService(this.services.Edge(process.env, internalSecretFile), L.EdgeLogFileName, L.EdgePidFileName))
 
         console.log(L.Steps.Seed)
         const api = new OperatorApiClient(N.OperatorBase)
@@ -501,18 +620,15 @@ export class LiveLoopStack
         console.log(L.Steps.Done + L.DescriptorPath())
     }
 
-    /** Best effort, every step on its own: stop the control plane, remove the IdP container + volume, delete the cluster and the folder. */
+    /** Best effort, every step on its own: stop the edge and the console, remove the IdP container + volume, delete the cluster and the folder. */
     public async Down(): Promise<void>
     {
         const L = LiveLoopStack
         const N = LiveLoopStackNames
         console.log(L.Steps.Down)
-        const pidFile = join(N.StackDir, L.PidFileName)
-        // Only a control plane that still answers is ours to stop; a dead one's pid may have been reused by another process.
-        if (existsSync(pidFile) && await LiveLoopStack.Pings())
-        {
-            await this.BestEffort(() => new ProcessTree(this.exec).Kill(Number(readFileSync(pidFile, L.Utf8).trim())))
-        }
+        // Only a service that still answers is ours to stop; a dead one's pid may have been reused by another process.
+        await this.StopService(L.EdgePidFileName, N.EdgeBase + L.HealthzPath)
+        await this.StopService(L.PidFileName, N.OperatorBase + L.PingPath)
         await this.BestEffort(() => this.exec.Run(L.Docker, [L.RmVerb, L.ForceFlag, L.RemoveVolumesFlag, L.ConsolePostgresContainer]))
         await this.BestEffort(() => this.exec.Run(L.Docker, [L.RmVerb, L.ForceFlag, L.IdpContainerPrefix + N.TenantId]))
         await this.BestEffort(() => this.exec.Run(L.Docker, [L.VolumeVerb, L.RmVerb, L.ForceFlag, L.IdpVolumePrefix + N.TenantId]))
@@ -559,33 +675,38 @@ export class LiveLoopStack
         return urlFile
     }
 
-    /** Starts `server.ts` detached with the stack's settings; its output goes to the log file in the stack folder. */
-    private StartControlPlane(dataRoot: string, databaseUrlFile: string): ChildProcess
+    /** The internal API's shared secret (32 random bytes, hex), in an owner-only file of the stack folder; never logged. */
+    private WriteInternalSecret(): string
+    {
+        const L = LiveLoopStack
+        const secret = randomBytes(L.InternalSecretBytes).toString(L.HexEncoding)
+        this.secrets.push(secret)
+        const file = join(LiveLoopStackNames.StackDir, L.InternalSecretFileName)
+        writeFileSync(file, secret, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
+        return file
+    }
+
+    /** Starts one service detached from its repository with its settings; its output goes to `logName` in the stack folder. */
+    private StartService(spec: LiveLoopServiceSpec, logName: string, pidName: string): ChildProcess
     {
         const L = LiveLoopStack
         const N = LiveLoopStackNames
-        const here = dirname(fileURLToPath(import.meta.url))
-        const controlPlaneDir = resolve(here, '..')
-        const log = openSync(join(N.StackDir, L.LogFileName), L.AppendFlag)
-        const env: NodeJS.ProcessEnv = {
-            ...process.env,
-            ...L.ReleaseEnv(process.env),
-            PRAGMATIC_ADMIN_DATA_ROOT: dataRoot,
-            PRAGMATIC_ADMIN_DATABASE_URL_FILE: databaseUrlFile,
-            PRAGMATIC_ADMIN_PORT: String(N.OperatorPort),
-            PRAGMATIC_ADMIN_OPERATOR_EMAIL: N.OperatorEmail,
-            PRAGMATIC_ADMIN_OPERATOR_PASSWORD: N.OperatorPassword,
-            PRAGMATIC_ADMIN_SECURE_COOKIE: L.FalseValue,
-            PRAGMATIC_TENANT_ADMIN_PORT: String(N.TenantPlanePort),
-            PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: N.TenantBaseDomain,
-            PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME: L.HttpScheme,
-            PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT: String(N.TenantPlanePort),
-            PRAGMATIC_AGENT_CHANNEL_PORT: String(N.AgentChannelPort),
-        }
-        const child = spawn(process.execPath, [resolve(here, ...L.TsxCliRelative), L.ServerScript], { cwd: controlPlaneDir, env, detached: true, stdio: ['ignore', log, log], windowsHide: true })
-        writeFileSync(join(N.StackDir, L.PidFileName), String(child.pid), L.Utf8)
+        const log = openSync(join(N.StackDir, logName), L.AppendFlag)
+        const child = spawn(process.execPath, [spec.tsxCli, spec.script], { cwd: spec.cwd, env: spec.env, detached: true, stdio: ['ignore', log, log], windowsHide: true })
+        writeFileSync(join(N.StackDir, pidName), String(child.pid), L.Utf8)
         child.unref()
         return child
+    }
+
+    /** Stops the service whose pid `pidName` holds, but only while `url` still answers: a dead one's pid may have been reused. */
+    private async StopService(pidName: string, url: string): Promise<void>
+    {
+        const L = LiveLoopStack
+        const pidFile = join(LiveLoopStackNames.StackDir, pidName)
+        if (existsSync(pidFile) && await LiveLoopStack.Answers(url))
+        {
+            await this.BestEffort(() => new ProcessTree(this.exec).Kill(Number(readFileSync(pidFile, L.Utf8).trim())))
+        }
     }
 
     /** The stack's ports must be free: a control plane already listening (the developer's own) must never be seeded. */
@@ -593,7 +714,8 @@ export class LiveLoopStack
     {
         const L = LiveLoopStack
         const probe = new NetPortProbe()
-        for (const port of [LiveLoopStackNames.OperatorPort, LiveLoopStackNames.TenantPlanePort, LiveLoopStackNames.AgentChannelPort])
+        const N = LiveLoopStackNames
+        for (const port of [N.OperatorPort, N.TenantPlanePort, N.AgentChannelPort, N.InternalApiPort])
         {
             if (!await probe.Free(port))
             {
@@ -602,12 +724,12 @@ export class LiveLoopStack
         }
     }
 
-    /** True when a control plane answers /api/ping on the stack's operator port. */
-    private static async Pings(): Promise<boolean>
+    /** True when `url` answers 2xx (the console's /api/ping, the edge's /healthz). */
+    private static async Answers(url: string): Promise<boolean>
     {
         try
         {
-            const response = await fetch(LiveLoopStackNames.OperatorBase + LiveLoopStack.PingPath)
+            const response = await fetch(url)
             await response.text()
             return response.ok
         }
@@ -617,8 +739,21 @@ export class LiveLoopStack
         }
     }
 
-    /** Waits for OUR control plane: an exited child fails at once (its log in the stack folder says why). */
+    /** Waits for OUR console: an exited child fails at once (its log in the stack folder says why). */
     private async WaitForPing(child: ChildProcess): Promise<void>
+    {
+        const L = LiveLoopStack
+        await this.WaitFor(child, LiveLoopStackNames.OperatorBase + L.PingPath, L.ExitedMessage, L.NotReadyMessage)
+    }
+
+    /** Waits for OUR edge the same way, on its /healthz. */
+    private async WaitForEdge(child: ChildProcess): Promise<void>
+    {
+        const L = LiveLoopStack
+        await this.WaitFor(child, LiveLoopStackNames.EdgeBase + L.HealthzPath, L.EdgeExitedMessage, L.EdgeNotReadyMessage)
+    }
+
+    private async WaitFor(child: ChildProcess, url: string, exitedMessage: string, notReadyMessage: string): Promise<void>
     {
         const L = LiveLoopStack
         const deadline = Date.now() + L.PingDeadlineMs
@@ -626,15 +761,15 @@ export class LiveLoopStack
         {
             if (child.exitCode !== null)
             {
-                throw new Error(L.ExitedMessage)
+                throw new Error(exitedMessage)
             }
-            if (await LiveLoopStack.Pings())
+            if (await LiveLoopStack.Answers(url))
             {
                 return
             }
             await new Promise<void>(r => setTimeout(r, L.PollMs))
         }
-        throw new Error(L.NotReadyMessage)
+        throw new Error(notReadyMessage)
     }
 
     /** The text with every secret this run handled replaced by a placeholder. */

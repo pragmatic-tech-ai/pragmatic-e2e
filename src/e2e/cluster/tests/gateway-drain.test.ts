@@ -4,17 +4,18 @@ import { request } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { mkdtempSync, mkdirSync, cpSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { trace, metrics } from '@opentelemetry/api'
 import { WebSocket } from 'ws'
 import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
-import { Gateway } from '../gateway.js'
-import { WorkerHost } from '../worker-host.js'
-import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
-import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
+import { Gateway } from '../../../../repos/pragmatic-env-gateway/src/cluster/gateway.js'
+import { WorkerHost } from '../../../../repos/pragmatic-env-server/server/src/cluster/worker-host.js'
+import { InMemoryEnvironmentProvisioning } from '../../../../repos/pragmatic-env-server/server/src/environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../../../repos/pragmatic-env-server/server/src/environments/environment-provisioning.js'
 import { type IWorkerRouter, type WorkerEndpoint, type MachineTlsRef, DrainController, type IInFlightSource, type Observability } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { StructuredLogger } from '@pragmatic-tech-ai/pragmatic-observability'
+import { SiblingCheckouts } from '../../../stack/sibling-checkouts.js'
+import { ClusterFixtures } from './cluster-fixtures.js'
 
 class StubRouter implements IWorkerRouter
 {
@@ -38,7 +39,7 @@ class StubRouter implements IWorkerRouter
 
 class GwFixture
 {
-    private static readonly Dir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'tests', 'fixtures', 'tls')
+    private static readonly Dir = SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'tls')
     public static readonly KeyEnv = 'PS_GWD_KEY'
 
     public static Tls(): MachineTlsRef

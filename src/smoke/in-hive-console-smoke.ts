@@ -12,7 +12,7 @@
  * discovery answers 503 and the smoke stops at its discovery preflight. The console reaches the agent channel at the control plane's
  * agent-channel URL (default http://host.docker.internal:<PRAGMATIC_AGENT_CHANNEL_PORT>). Run with:
  *
- *   npx tsx admin/control-plane/in-hive-console-smoke.ts --operator-email admin@control-plane.test --password-file <path>
+ *   npx tsx src/smoke/in-hive-console-smoke.ts --operator-email admin@control-plane.test --password-file <path>
  *       [--hive default-pragmatic-hive] [--base-domain localtest.me] [--control-plane http://127.0.0.1:7000]
  *
  * Steps: preflight (+ ingress-nginx when no `nginx` IngressClass exists), operator login, console settings with development TLS,
@@ -36,7 +36,7 @@ import { request as httpsRequest } from 'node:https'
 import type { TLSSocket } from 'node:tls'
 import { fileURLToPath } from 'node:url'
 import { chromium, type Page } from 'playwright'
-import { IdpLoginPage } from './idp-login-page.js'
+import { IdpLoginPage } from '../../repos/pragmatic-platform-admin/src/idp-login-page.js'
 import { K8sManifestBuilder } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { KindImageLoader } from './kind-image-loader.js'
 import { KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
@@ -67,7 +67,7 @@ export class InHiveConsoleSmoke
     private static readonly HiveFlag = '--hive'
     private static readonly BaseDomainFlag = '--base-domain'
     private static readonly ControlPlaneFlag = '--control-plane'
-    private static readonly UsageMessage = 'usage: npx tsx admin/control-plane/in-hive-console-smoke.ts --operator-email EMAIL --password-file PATH [--hive ID] [--base-domain DOMAIN] [--control-plane URL]'
+    private static readonly UsageMessage = 'usage: npx tsx src/smoke/in-hive-console-smoke.ts --operator-email EMAIL --password-file PATH [--hive ID] [--base-domain DOMAIN] [--control-plane URL]'
 
     private static readonly Kubectl = 'kubectl'
     private static readonly ContextFlag = '--context'

@@ -1,0 +1,2 @@
+# LF everywhere: the shell scripts run in Git Bash and on Linux; Windows PowerShell reads LF scripts too.
+* text=auto eol=lf

@@ -5,7 +5,7 @@
  * `pragmatic-server:dev` image on the cluster's node (`dev/dev-cluster.ts up` loads it there;
  * the manifest uses imagePullPolicy IfNotPresent). Run with:
  *
- *   npx tsx admin/control-plane/k8s-hive-smoke.ts
+ *   npx tsx src/smoke/k8s-hive-smoke.ts
  *
  * Drives a throwaway dev-blank environment through Apply -> WaitHealthy -> serve ->
  * Roll -> Teardown via a real KubectlHiveOrchestrator. SP-HIVE-3 made Apply/Roll fail closed on
@@ -22,10 +22,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BundleBuilder, EnvServerSeedSource, TemplateCatalog, EnvironmentWorkloadFactory, type EnvironmentWorkload, EnvStatus, EnvType, Template, type EnvironmentRecord, EffectiveRegistry, type IHiveOrchestrator, K8sManifestBuilder, KubectlHiveOrchestrator, HiveBackend, InfraMode, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { DockerImageDigest } from './image-digest.js'
+import { DockerImageDigest } from '../../repos/pragmatic-platform-admin/src/image-digest.js'
 import { ImageSigner, CryptoImageVerifier, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
-import { FileSignatureStore } from './signature-store.js'
+import { FileSignatureStore } from '../../repos/pragmatic-platform-admin/src/signature-store.js'
 
 export class K8sHiveSmoke
 {

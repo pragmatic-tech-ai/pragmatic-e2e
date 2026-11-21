@@ -6,16 +6,16 @@ import { randomBytes, X509Certificate } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DevCa } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
-import { IdpContainerEnv } from '../idp-container-env.js'
-import { SealedSecretStore } from '../sealed-secret-store.js'
-import { DevCertificateAuthority } from '../dev-certificate-authority.js'
+import { IdpContainerEnv } from '../../../repos/pragmatic-platform-admin/src/idp-container-env.js'
+import { SealedSecretStore } from '../../../repos/pragmatic-platform-admin/src/sealed-secret-store.js'
+import { DevCertificateAuthority } from '../../../repos/pragmatic-platform-admin/src/dev-certificate-authority.js'
 
 class TrustScriptFixture
 {
     public static readonly Prefix = 'devca-trust-'
     public static readonly Domain = 'localtest.me'
     public static readonly Shell = 'powershell.exe'
-    public static readonly ScriptRelative = ['..', 'dev', 'dev-ca-trust.ps1']
+    public static readonly ScriptRelative = ['..', 'dev-ca-trust.ps1']
     public static readonly ShellArgs = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File']
     public static readonly CaFileFlag = '-CaFile'
     public static readonly ThumbprintFlag = '-ShowThumbprint'

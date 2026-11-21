@@ -14,7 +14,7 @@
  * Requires: a deployed in-hive console with its development CA trusted by node, the owner's email and password in files, the
  * Playwright Chromium browser. Run with:
  *
- *   NODE_EXTRA_CA_CERTS=<devCaFile> npx tsx admin/control-plane/console-relay-hold-smoke.ts --console https://console-<tenant>.<base>
+ *   NODE_EXTRA_CA_CERTS=<devCaFile> npx tsx src/smoke/console-relay-hold-smoke.ts --console https://console-<tenant>.<base>
  *       --environment <name> --owner-email-file <path> --password-file <path> [--hold-seconds 150]
  *
  * Steps: console lookup (tenantId), begin with a loopback redirect and a PKCE challenge, a real Chromium sign-in at the IdP (the
@@ -30,7 +30,7 @@ import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { chromium } from 'playwright'
-import { IdpLoginPage } from './idp-login-page.js'
+import { IdpLoginPage } from '../../repos/pragmatic-platform-admin/src/idp-login-page.js'
 
 /** Parsed command line. */
 type SmokeOptions = { console: string; environment: string; ownerEmailFile: string; passwordFile: string; holdSeconds: number }
@@ -52,7 +52,7 @@ export class ConsoleRelayHoldSmoke
     private static readonly PasswordFileFlag = '--password-file'
     private static readonly HoldSecondsFlag = '--hold-seconds'
     private static readonly DefaultHoldSeconds = 150
-    private static readonly UsageMessage = 'usage: NODE_EXTRA_CA_CERTS=CAFILE npx tsx admin/control-plane/console-relay-hold-smoke.ts --console URL --environment NAME --owner-email-file PATH --password-file PATH [--hold-seconds N]'
+    private static readonly UsageMessage = 'usage: NODE_EXTRA_CA_CERTS=CAFILE npx tsx src/smoke/console-relay-hold-smoke.ts --console URL --environment NAME --owner-email-file PATH --password-file PATH [--hold-seconds N]'
 
     private static readonly ConsolePath = '/desktop/console'
     private static readonly BeginPath = '/desktop/sign-in/begin'

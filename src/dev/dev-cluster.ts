@@ -2,8 +2,8 @@
  * The local development Kubernetes cluster (LocalDevCluster: kind cluster `pragmatic-dev`, context `kind-pragmatic-dev`).
  * It replaces Docker Desktop's built-in Kubernetes for the dev stack's Local hive and the gated smokes.
  *
- *   npx tsx admin/control-plane/dev/dev-cluster.ts up     # create it when missing, then load the images onto its node
- *   npx tsx admin/control-plane/dev/dev-cluster.ts down   # delete it
+ *   npx tsx src/dev/dev-cluster.ts up     # create it when missing, then load the images onto its node
+ *   npx tsx src/dev/dev-cluster.ts down   # delete it
  *
  * `up` is idempotent and re-loads the images every time, so a rebuilt `pragmatic-server:dev` reaches the node (a kind node
  * keeps its own image store; pods pull with IfNotPresent). It maps no host port: dev-up's Caddy holds :443 and the live-loop
@@ -12,7 +12,7 @@
  */
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { KindCli, type IKind } from '../kind.js'
+import { KindCli, type IKind } from '../../repos/pragmatic-platform-admin/src/kind.js'
 import { NodeExecFile, type IExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 import { LocalDevCluster } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
@@ -29,7 +29,7 @@ export class DevCluster
     private static readonly InspectVerb = 'inspect'
     private static readonly PullVerb = 'pull'
     private static readonly UsageMessage = 'usage: dev-cluster.ts up|down'
-    private static readonly NotBuiltMessage = 'pragmatic-server:dev is not in the local docker store; build it first (see docker/Dockerfile)'
+    private static readonly NotBuiltMessage = 'pragmatic-server:dev is not in the local docker store; build it first (docker/Dockerfile of pragmatic-env-server)'
     private static readonly CreatingMessage = '[dev-cluster] creating kind cluster ' + LocalDevCluster.Name
     private static readonly ExistsMessage = '[dev-cluster] kind cluster ' + LocalDevCluster.Name + ' already exists'
     private static readonly LoadingPrefix = '[dev-cluster] loading '

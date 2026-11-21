@@ -4,7 +4,7 @@
  * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster) and the `pragmatic-server:dev` image
  * (which carries the `pragmatic-idpd` binary the IdP pod runs) in the local image store. Run with:
  *
- *   npx tsx admin/control-plane/in-cluster-idp-smoke.ts
+ *   npx tsx src/smoke/in-cluster-idp-smoke.ts
  *
  * Drives a real InClusterIdpDriver (wired with the InClusterIdpSeedSource, real KubectlCli + K8sManifestBuilder) in-process:
  * EnsureRunning applies the seed Secrets + the IdP workload and waits for rollout. The host then port-forwards the IdP Service and,
@@ -17,8 +17,8 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { SmokeCluster } from './smoke-cluster.js'
 import { request } from 'node:https'
 import { fileURLToPath } from 'node:url'
-import { InClusterIdpDriver } from './in-cluster-idp-driver.js'
-import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
+import { InClusterIdpDriver } from '../../repos/pragmatic-platform-admin/src/in-cluster-idp-driver.js'
+import { InClusterIdpSeedSource } from '../../repos/pragmatic-platform-admin/src/in-cluster-idp-seed.js'
 import { K8sManifestBuilder, IdpStatus, type IdpWorkloadResult } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity'

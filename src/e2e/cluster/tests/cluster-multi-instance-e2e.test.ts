@@ -6,12 +6,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { WorkerHost } from '../worker-host.js'
-import { Gateway } from '../gateway.js'
-import { RedisWorkerRouter } from '../redis-worker-router.js'
-import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
-import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
+import { WorkerHost } from '../../../../repos/pragmatic-env-server/server/src/cluster/worker-host.js'
+import { Gateway } from '../../../../repos/pragmatic-env-gateway/src/cluster/gateway.js'
+import { RedisWorkerRouter } from '../../../../repos/pragmatic-env-gateway/src/cluster/redis-worker-router.js'
+import { InMemoryEnvironmentProvisioning } from '../../../../repos/pragmatic-env-server/server/src/environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../../../repos/pragmatic-env-server/server/src/environments/environment-provisioning.js'
 import type { MachineTlsRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
+import { SiblingCheckouts } from '../../../stack/sibling-checkouts.js'
+import { ClusterFixtures } from './cluster-fixtures.js'
 
 class Fixture
 {
@@ -23,7 +25,7 @@ class Fixture
 
     private static Dir(): string
     {
-        return join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'tls')
+        return SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'tls')
     }
 
     public static ServerTls(): MachineTlsRef
@@ -41,7 +43,7 @@ class Fixture
     public static Seed(environment: string): string
     {
         const baseDir = mkdtempSync(join(tmpdir(), 'ps-clmi-'))
-        const solution = join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution')
+        const solution = SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, 'sample-solution')
         mkdirSync(join(baseDir, environment), { recursive: true })
         cpSync(solution, join(baseDir, environment, 'solution'), { recursive: true })
         process.env[Fixture.KeyEnv] = randomBytes(32).toString('base64')

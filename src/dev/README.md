@@ -3,6 +3,11 @@
 A persistent, production-faithful-HTTPS local stack: the platform (operator) admin panel, a tenant
 admin panel over TLS on a real subdomain, and a seeded tenant with a local hive.
 
+The console runs from the `pragmatic-platform-admin` checkout and serves the tenant portal of the
+`pragmatic-tenant-admin` checkout; both sit in `PRAGMATIC_E2E_REPOS_DIR` (default: the folder this repository sits
+in), each with `npm ci` done and the tenant portal built (`npm run build` in `tenant-portal/`). The console runs in
+role `admin`; the agent channel is the platform edge's (`pragmatic-platform-edge`), which this stack does not start.
+
 ## Topology
 
 - **Platform admin panel (operator):** `http://127.0.0.1:7000` — loopback, as in production (the operator
@@ -18,7 +23,7 @@ admin panel over TLS on a real subdomain, and a seeded tenant with a local hive.
   `pragmatic-dev` (context `kind-pragmatic-dev`). `dev-up.sh` creates it when missing and loads `pragmatic-server:dev`,
   `registry:2` and `postgres:16` onto its node on every run, so a rebuilt server image reaches the hive. It maps no host
   port, so it runs beside Caddy and the live-loop e2e cluster. Docker Desktop's built-in Kubernetes is not used; you can
-  turn it off. Manage the cluster on its own with `npx tsx admin/control-plane/dev/dev-cluster.ts up|down` (needs
+  turn it off. Manage the cluster on its own with `npx tsx src/dev/dev-cluster.ts up|down` from this repository (needs
   `kind` on PATH). A hive seeded before this change keeps its stored settings: one without a `configRef` now lands on
   `kind-pragmatic-dev`, but a `registry.mode` of `provision` still points its workloads at `localhost:5000`, which a kind
   node cannot reach. Recreate such a hive with `registry.mode` `attach` (re-running `dev-seed.sh` does not
@@ -26,10 +31,15 @@ admin panel over TLS on a real subdomain, and a seeded tenant with a local hive.
 
 Durable state: every record of the console (tenants, clients, hives, the IdP registry, operators, sessions, the
 activity log) lives in its own Postgres, the container `pragmatic-dev-postgres` (`127.0.0.1:55433`, database
-`platform_admin`, volume `pragmatic-dev-postgres-data`) that `dev-up.sh` starts. `admin/control-plane/data/` (gitignored)
-keeps what stays on files: the master key, public keys, the development CA, environment bundles, and the database
-password and URL file (`data/postgres/`). A `data/` folder from before the database is imported once by `dev-up.sh`
-(`bin/pragmatic-admin-import.ts`; its JSON files are left as they are). Stop and restart anytime — state (and the IdP
+`platform_admin`, volume `pragmatic-dev-postgres-data`) that `dev-up.sh` starts. The data folder
+`PRAGMATIC_DEV_DATA_ROOT` (default `~/.pragmatic/dev-stack/data`, outside every repository) keeps what stays on files:
+the master key, public keys, the development CA, environment bundles, and the database password and URL file
+(`postgres/`). A data folder from before the database is imported once by `dev-up.sh` (pragmatic-platform-admin's
+`src/bin/pragmatic-admin-import.ts`; its JSON files are left as they are).
+
+Coming from pragmatic-server: the stack used to keep this folder at `pragmatic-server/admin/control-plane/data`.
+Move that folder to `~/.pragmatic/dev-stack/data` once (or point `PRAGMATIC_DEV_DATA_ROOT` at it) before the first
+`dev-up.sh`; the database volume is the same. Stop and restart anytime — state (and the IdP
 container + volume) persists. To start over, remove the container and `docker volume rm pragmatic-dev-postgres-data`.
 
 ## First-time setup (once)
@@ -38,15 +48,15 @@ container + volume) persists. To start over, remove the container and `docker vo
    open an elevated PowerShell and run `trust-ca.ps1`. It trusts the Caddy `*.lvh.me` CA so the browser accepts
    the tenant panel's TLS without warnings.
 2. **Trust the acme IdP CA** (no elevation) after `dev-seed.sh` has provisioned acme: run `dev-ca-trust.ps1`
-   with `-CaFile admin\control-plane\data\idp\acme\tls\ca.crt -Install` (see "Local platform IdP certificates").
+   with `-CaFile %USERPROFILE%\.pragmatic\dev-stack\data\idp\acme\tls\ca.crt -Install` (see "Local platform IdP certificates").
    Restart the browser afterward.
 
 ## Run
 
 ```bash
-bash admin/control-plane/dev/dev-up.sh     # starts Caddy (:443) + the control-plane server (foreground)
-bash admin/control-plane/dev/dev-seed.sh   # (first run only) seeds client + tenant acme + local hive; writes dev-info.txt
-bash admin/control-plane/dev/dev-down.sh   # stops the Caddy proxy (Ctrl-C the dev-up terminal to stop the server)
+bash src/dev/dev-up.sh     # starts Caddy (:443) + the console (foreground)
+bash src/dev/dev-seed.sh   # (first run only) seeds client + tenant acme + local hive; writes dev-info.txt
+bash src/dev/dev-down.sh   # stops the Caddy proxy (Ctrl-C the dev-up terminal to stop the console)
 ```
 
 `dev-info.txt` (gitignored) holds the URLs and the one-time tenant-owner password captured at provision time.
@@ -67,9 +77,9 @@ The in-hive console is served over TLS signed by a per-domain development CA. Th
 trust it for your Windows user (no elevation, Windows shows its own confirmation) or remove it again:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File admin\control-plane\dev\dev-ca-trust.ps1 -CaFile <ca.crt> -Install
-powershell -NoProfile -ExecutionPolicy Bypass -File admin\control-plane\dev\dev-ca-trust.ps1 -CaFile <ca.crt> -Remove
-powershell -NoProfile -ExecutionPolicy Bypass -File admin\control-plane\dev\dev-ca-trust.ps1 -CaFile <ca.crt> -ShowThumbprint
+powershell -NoProfile -ExecutionPolicy Bypass -File src\dev\dev-ca-trust.ps1 -CaFile <ca.crt> -Install
+powershell -NoProfile -ExecutionPolicy Bypass -File src\dev\dev-ca-trust.ps1 -CaFile <ca.crt> -Remove
+powershell -NoProfile -ExecutionPolicy Bypass -File src\dev\dev-ca-trust.ps1 -CaFile <ca.crt> -ShowThumbprint
 ```
 
 Add `-WhatIf` to `-Install` or `-Remove` to see what would happen without changing the store. `-Install` refuses
@@ -92,7 +102,7 @@ imported by `trust-ca.ps1`) is not in your user store, so `dev-ca-trust.ps1 -Rem
 thumbprint with `dev-ca-trust.ps1 -CaFile <old ca.crt> -ShowThumbprint`, then remove it from an elevated PowerShell
 with `Remove-Item Cert:\LocalMachine\Root\<thumbprint>`.
 
-The server image can be rebuilt under the same tag. On the next tenant sign-in or environment action, the control
+The server image (`pragmatic-server:dev`, built from pragmatic-env-server's `docker/Dockerfile`) can be rebuilt under the same tag. On the next tenant sign-in or environment action, the control
 plane compares the image a healthy IdP container runs with the image the tag now names, and recreates a stale
 container on the current image, on the same port and identity volume. This signs out anyone signed in to that IdP,
 because its sessions are held in memory. If the new image cannot come up, the container is brought back on the

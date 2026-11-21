@@ -1,0 +1,8 @@
+{
+  "pragmatic-env-gateway": "fac3ef42a19247aa6dc11c394db3a2a0cbb7e9a8",
+  "pragmatic-env-server": "e36bcfe5999fdb52cc4a189a65baace32fd5cd13",
+  "pragmatic-platform-admin": "c7c5c7deb319c5661ce952010cbc2f1d966df6fc",
+  "pragmatic-platform-edge": "1d9b00b479647eb9b82c982867478e8a2a5c7c7f",
+  "pragmatic-tenant-admin": "2527c9d9e92324f506e9e0dea5fe99dd1aa7778e",
+  "pragmatic-tenant-idp": "b326177785b486aa368c1cf97388124fedd81eee"
+}

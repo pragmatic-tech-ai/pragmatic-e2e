@@ -4,10 +4,10 @@
  * Requires a local Kubernetes context (default `kind-pragmatic-dev`; override with PRAGMATIC_SMOKE_CONTEXT) and a
  * `pragmatic-server:dev` image built AFTER the tenant-admin packaging landed (it must contain
  * `dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js` and `dist-tenant-admin/admin/tenant-portal/dist`; rebuild with
- * the invocation in docker/Dockerfile's header, and on a kind cluster `kind load docker-image pragmatic-server:dev`).
+ * the invocation in pragmatic-env-server's docker/Dockerfile header, and on a kind cluster `kind load docker-image pragmatic-server:dev`).
  * Run with:
  *
- *   npx tsx admin/control-plane/tenant-admin-smoke.ts
+ *   npx tsx src/smoke/tenant-admin-smoke.ts
  *
  * Plays the platform: composes a directory + deployment registry in-process, publishes and gates two versions, serves the
  * REAL AgentChannelHost on all interfaces (pod-visible as host.docker.internal; override the host with
@@ -33,24 +33,24 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AgentChannelHost } from '@pragmatic-tech-ai/pragmatic-platform-link'
-import { LocalAgentChannelBackend } from './local-agent-channel-backend.js'
-import { ClientRegistry } from './client-registry.js'
+import { LocalAgentChannelBackend } from '../../repos/pragmatic-platform-admin/src/local-agent-channel-backend.js'
+import { ClientRegistry } from '../../repos/pragmatic-platform-admin/src/client-registry.js'
 import { EnvironmentPlacement, EnvironmentRegistry, EnvStatus, EnvType, Template, type EnvironmentRecord, type IContainerProbe, K8sManifestBuilder, ManifestRegistry, HiveBackend, InfraMode, TenantPlaneComposer, TenantSessionClaims, TenantSessions, TenantAdminDatabaseSecret } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { GatingRegistry } from './gating-record.js'
-import { HiveObservationRegistry } from './hive-observation-record.js'
-import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
-import { HiveRegistry } from './hive-registry.js'
+import { GatingRegistry } from '../../repos/pragmatic-platform-admin/src/gating-record.js'
+import { HiveObservationRegistry } from '../../repos/pragmatic-platform-admin/src/hive-observation-record.js'
+import { PlatformHiveOrchestratorFactory } from '../../repos/pragmatic-platform-admin/src/platform-hive-orchestrator-factory.js'
+import { HiveRegistry } from '../../repos/pragmatic-platform-admin/src/hive-registry.js'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
-import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
-import { PlatformDirectory } from './platform-directory.js'
-import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
-import { SelectionRegistry } from './selection-record.js'
-import { TenantAdminBootstrap, type TenantBootstrap } from './tenant-admin-bootstrap.js'
-import { TenantRegistry } from './tenant-registry.js'
+import { PlatformDeploymentRegistry } from '../../repos/pragmatic-platform-admin/src/platform-deployment-registry.js'
+import { PlatformDirectory } from '../../repos/pragmatic-platform-admin/src/platform-directory.js'
+import { RolloutRegistrationRegistry } from '../../repos/pragmatic-platform-admin/src/rollout-registration-record.js'
+import { SelectionRegistry } from '../../repos/pragmatic-platform-admin/src/selection-record.js'
+import { TenantAdminBootstrap, type TenantBootstrap } from '../../repos/pragmatic-platform-admin/src/tenant-admin-bootstrap.js'
+import { TenantRegistry } from '../../repos/pragmatic-platform-admin/src/tenant-registry.js'
 import { SqlSessionRepository } from '@pragmatic-tech-ai/pragmatic-app-host'
 import { PgSession } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import pg from 'pg'
-import { DevPlatformImages } from './platform-images.js'
+import { DevPlatformImages } from '../../repos/pragmatic-platform-admin/src/platform-images.js'
 
 /** The smoke never reconciles against docker, so no container is ever reported running. */
 class NoContainerProbe implements IContainerProbe
