@@ -56,7 +56,9 @@ checkout beside Plexus), so this repository needs `npm ci` and `npm run siblings
 `stack.json` lives in the stack folder (`~/.pragmatic/e2e-stack`, or `PRAGMATIC_E2E_STACK_DIR`) and names its files relative
 to that folder, so one descriptor reads from Windows and from WSL. On a plain Docker engine (WSL, Linux) `up` makes
 `host.docker.internal` resolve in the cluster's pods (a CoreDNS entry for the kind network gateway); the host itself needs
-`host.docker.internal` → `127.0.0.1` in its hosts file, as Docker Desktop installs write it.
+an entry for that name in its hosts file (Docker Desktop writes one with the LAN address; on a plain engine `127.0.0.1`
+does). The tenant plane's browser origin is `https://e2e.lvh.me:7443`, a loopback TLS front with a development certificate
+(the tenant's realm sign-in service accepts client redirects only over https).
 
 ### On the hive laptop
 

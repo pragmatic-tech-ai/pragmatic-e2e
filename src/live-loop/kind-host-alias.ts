@@ -25,11 +25,17 @@ export class KindHostAlias
     /** Marks the block this class writes, so a re-run replaces it instead of adding a second one. */
     private static readonly Marker = ' # pragmatic-e2e: ' + KindHostAlias.HostName
     private static readonly RootBlockPattern = /^\.:53 \{\n/m
-    private static readonly OwnBlockPattern = /^ {4}hosts \{ # pragmatic-e2e: host\.docker\.internal\n(?: {8}.*\n)* {4}\}\n/m
+    private static readonly RegexSpecials = /[.*+?^${}()|[\]\\]/g
+    private static readonly EscapedMatch = '\\$&'
     private static readonly BlockOpen = '    hosts {'
     private static readonly EntryIndent = '\n        '
     private static readonly EntrySeparator = ' '
-    private static readonly BlockClose = '\n        fallthrough\n    }\n'
+    private static readonly BlockEnd = '    }\n'
+    private static readonly BlockClose = KindHostAlias.EntryIndent + 'fallthrough\n' + KindHostAlias.BlockEnd
+    /** The block this class wrote earlier: its opening line (marker included), any entry lines, its closing line. */
+    private static readonly OwnBlockPattern = new RegExp(
+        '^' + KindHostAlias.Escaped(KindHostAlias.BlockOpen + KindHostAlias.Marker) + '\\n(?:' + KindHostAlias.Escaped(KindHostAlias.EntryIndent.slice(1)) + '.*\\n)*' + KindHostAlias.Escaped(KindHostAlias.BlockEnd),
+        'm')
     private static readonly WhitespacePattern = /\s+/
     private static readonly Ipv4Pattern = /^\d{1,3}(?:\.\d{1,3}){3}$/
     private static readonly NoRootBlockMessage = 'the CoreDNS Corefile has no root server block (.:53 {), so host.docker.internal cannot be added'
@@ -81,6 +87,12 @@ export class KindHostAlias
             throw new Error(A.NoGatewayMessage + gateways.trim())
         }
         return ipv4
+    }
+
+    /** `text` as a literal inside a regular expression. */
+    private static Escaped(text: string): string
+    {
+        return text.replace(KindHostAlias.RegexSpecials, KindHostAlias.EscapedMatch)
     }
 
     private Kubectl(args: readonly string[]): Promise<{ stdout: string; stderr: string }>

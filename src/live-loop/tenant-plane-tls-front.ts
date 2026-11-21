@@ -33,6 +33,11 @@ export class TenantPlaneTlsFront
     public static readonly KeyFileEnvVar = 'PRAGMATIC_E2E_TLS_FRONT_KEY_FILE'
     private static readonly Loopback = '127.0.0.1'
     private static readonly ForwardedProtoHeader = 'x-forwarded-proto'
+    private static readonly ForwardedForHeader = 'x-forwarded-for'
+    private static readonly ForwardedPrefix = 'x-forwarded-'
+    private static readonly ForwardedHeader = 'forwarded'
+    private static readonly CloseEvent = 'close'
+    private static readonly ClientErrorEvent = 'clientError'
     private static readonly Https = 'https'
     private static readonly BadGatewayStatus = 502
     private static readonly BadGatewayBody = 'the tenant plane is not answering'
@@ -74,19 +79,26 @@ export class TenantPlaneTlsFront
             const upstream = request({ host: F.Loopback, port: this.options.targetPort, method: req.method, path: req.url, headers: F.Forwarded(req) }, answer =>
             {
                 res.writeHead(answer.statusCode ?? F.BadGatewayStatus, answer.headers)
+                answer.on(F.ErrorEvent, () => res.destroy())
                 answer.pipe(res)
             })
             upstream.on(F.ErrorEvent, () =>
             {
-                if (!res.headersSent)
+                if (res.headersSent)
                 {
-                    res.writeHead(F.BadGatewayStatus)
+                    res.destroy()
+                    return
                 }
+                res.writeHead(F.BadGatewayStatus)
                 res.end(F.BadGatewayBody)
             })
+            // A browser that goes away mid-request takes its upstream request with it.
+            res.on(F.CloseEvent, () => upstream.destroy())
+            res.on(F.ErrorEvent, () => upstream.destroy())
             req.pipe(upstream)
         })
         server.on(F.UpgradeEvent, (req: IncomingMessage, socket: Duplex, head: Buffer) => this.Relay(req, socket, head))
+        server.on(F.ClientErrorEvent, (_err: Error, socket: Duplex) => socket.destroy())
         this.server = server
         return new Promise((done, fail) =>
         {
@@ -126,14 +138,29 @@ export class TenantPlaneTlsFront
             socket.pipe(upstream)
         })
         upstream.on(F.ErrorEvent, () => socket.destroy())
+        upstream.on(F.CloseEvent, () => socket.destroy())
         socket.on(F.ErrorEvent, () => upstream.destroy())
+        socket.on(F.CloseEvent, () => upstream.destroy())
     }
 
-    /** The browser's headers, Host and Origin included, plus the scheme it used. */
-    private static Forwarded(req: IncomingMessage): OutgoingHttpHeaders
+    /**
+     * The browser's headers, Host and Origin included, with the forwarding headers this front vouches for in place of any the
+     * client sent (the tenant listener trusts them): the scheme it used and its address.
+     */
+    public static Forwarded(req: IncomingMessage): OutgoingHttpHeaders
     {
         const F = TenantPlaneTlsFront
-        return { ...req.headers, [F.ForwardedProtoHeader]: F.Https }
+        const headers: OutgoingHttpHeaders = {}
+        for (const [name, value] of Object.entries(req.headers))
+        {
+            if (!name.startsWith(F.ForwardedPrefix) && name !== F.ForwardedHeader)
+            {
+                headers[name] = value
+            }
+        }
+        headers[F.ForwardedProtoHeader] = F.Https
+        headers[F.ForwardedForHeader] = req.socket.remoteAddress ?? F.Loopback
+        return headers
     }
 
     private static PortOf(env: NodeJS.ProcessEnv, name: string): number

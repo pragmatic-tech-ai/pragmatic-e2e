@@ -182,6 +182,7 @@ class ServicesFx
     public static readonly DataRoot = join('S:', 'stack', 'data')
     public static readonly UrlFile = join('S:', 'stack', 'postgres-url')
     public static readonly SecretFile = join('S:', 'stack', 'internal-api-secret')
+    public static readonly OperatorPasswordFile = join('S:', 'stack', 'operator-password')
 
     public static With(body: (dir: string, services: LiveLoopServices) => void): void
     {
@@ -218,7 +219,9 @@ describe('LiveLoopServices', () =>
         ServicesFx.With((dir, services) =>
         {
             const admin = join(dir, 'pragmatic-platform-admin')
-            const spec = services.Console({ KEEP: 'me' }, ServicesFx.DataRoot, ServicesFx.UrlFile, ServicesFx.SecretFile)
+            const spec = services.Console({ KEEP: 'me' }, ServicesFx.DataRoot, ServicesFx.UrlFile, ServicesFx.SecretFile, ServicesFx.OperatorPasswordFile)
+            assert.equal(spec.env.PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE, ServicesFx.OperatorPasswordFile)
+            assert.equal(spec.env.PRAGMATIC_ADMIN_OPERATOR_PASSWORD, undefined)
             assert.equal(spec.cwd, admin)
             assert.equal(spec.script, join('src', 'server.ts'))
             assert.equal(spec.tsxCli, join(admin, 'node_modules', 'tsx', 'dist', 'cli.mjs'))
@@ -240,7 +243,7 @@ describe('LiveLoopServices', () =>
     {
         ServicesFx.With((_dir, services) =>
         {
-            const spec = services.Console({}, ServicesFx.DataRoot, ServicesFx.UrlFile, ServicesFx.SecretFile)
+            const spec = services.Console({}, ServicesFx.DataRoot, ServicesFx.UrlFile, ServicesFx.SecretFile, ServicesFx.OperatorPasswordFile)
             assert.equal(spec.env.PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME, 'https')
             assert.equal(spec.env.PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT, String(N.TenantPlaneTlsPort))
             assert.equal(spec.env.PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY, 'true')
@@ -369,10 +372,31 @@ describe('LiveLoopStack.StopPlan', () =>
 
 describe('LiveLoopStack.Redact', () =>
 {
-    it('replaces the stack passwords in any failure text (the owner one-time password joins them once minted)', () =>
+    it('replaces every held secret in any failure text (the per-run operator password, the owner one-time password)', () =>
     {
-        const out = new LiveLoopStack().Redact('login failed for ' + LiveLoopStackNames.OperatorPassword)
-        assert.equal(out, 'login failed for ***')
+        const stack = new LiveLoopStack()
+        stack.HoldSecret('per-run-operator')
+        stack.HoldSecret('one-time')
+        assert.equal(stack.Redact('login failed for per-run-operator, then one-time'), 'login failed for ***, then ***')
+    })
+})
+
+describe('LiveLoopStack.IsStackFolder', () =>
+{
+    it('lets down delete the default stack folder, or a folder holding the marker up writes, and nothing else', () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'stack-marker-'))
+        try
+        {
+            assert.equal(LiveLoopStack.IsStackFolder(LiveLoopStackNames.DefaultStackDir), true)
+            assert.equal(LiveLoopStack.IsStackFolder(dir), false)
+            writeFileSync(join(dir, '.pragmatic-e2e-stack'), 'x')
+            assert.equal(LiveLoopStack.IsStackFolder(dir), true)
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
     })
 })
 

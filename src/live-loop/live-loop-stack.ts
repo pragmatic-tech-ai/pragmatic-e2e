@@ -35,6 +35,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createConnection } from 'node:net'
 import { homedir } from 'node:os'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -85,7 +86,6 @@ export class LiveLoopStackNames
     public static readonly HiveId = 'e2e-hive'
     public static readonly OwnerEmail = 'o@t.io'
     public static readonly OperatorEmail = 'op@t.io'
-    public static readonly OperatorPassword = 'e2e-operator'
     public static readonly OperatorPort = 7000
     public static readonly TenantPlanePort = 7100
     /** The agent channel the hive agent dials home to; its pods reach this machine at http://host.docker.internal:<port>. */
@@ -355,7 +355,7 @@ export class LiveLoopServices
     }
 
     /** The console: operator :7000, tenant plane :7100 (serving pragmatic-tenant-admin's portal), internal API :7002. */
-    public Console(base: NodeJS.ProcessEnv, dataRoot: string, databaseUrlFile: string, internalSecretFile: string): LiveLoopServiceSpec
+    public Console(base: NodeJS.ProcessEnv, dataRoot: string, databaseUrlFile: string, internalSecretFile: string, operatorPasswordFile: string): LiveLoopServiceSpec
     {
         const S = LiveLoopServices
         const N = LiveLoopStackNames
@@ -372,7 +372,7 @@ export class LiveLoopServices
                 PRAGMATIC_ADMIN_DATABASE_URL_FILE: databaseUrlFile,
                 PRAGMATIC_ADMIN_PORT: String(N.OperatorPort),
                 PRAGMATIC_ADMIN_OPERATOR_EMAIL: N.OperatorEmail,
-                PRAGMATIC_ADMIN_OPERATOR_PASSWORD: N.OperatorPassword,
+                PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE: operatorPasswordFile,
                 PRAGMATIC_ADMIN_SECURE_COOKIE: S.FalseValue,
                 PRAGMATIC_ADMIN_INTERNAL_PORT: String(N.InternalApiPort),
                 PRAGMATIC_ADMIN_INTERNAL_BIND: S.LoopbackBind,
@@ -382,8 +382,9 @@ export class LiveLoopServices
                 // Browsers reach the tenant plane through the TLS front: the realm sign-in service accepts only https redirects.
                 PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME: S.HttpsScheme,
                 PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT: String(N.TenantPlaneTlsPort),
-                // The front reports the browser's https in X-Forwarded-Proto (the Origin check compares scheme too); the
-                // tenant listener is loopback-only, so only this machine's processes can claim to be that proxy.
+                // The front reports the browser's https in X-Forwarded-Proto (the Origin check compares scheme too). The tenant
+                // listener is loopback-only, but any local account can reach loopback (on the hive laptop, Windows accounts
+                // too, through WSL's localhost relay): it is a test stack with synthetic data and per-run secrets.
                 PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY: S.TrueValue,
                 PRAGMATIC_TENANT_PORTAL_DIR: join(this.roots.Of(S.TenantAdmin), S.TenantPortalDir, S.DistDir),
                 // The console does not listen on the agent channel (the edge does); it still names it in hive bundles.
@@ -501,6 +502,12 @@ export class LiveLoopStack
     private static readonly TlsFrontLogFileName = 'tls-front.log'
     private static readonly TlsFrontPidFileName = 'tls-front.pid'
     private static readonly TlsFrontDirName = 'tls-front'
+    private static readonly MarkerFileName = '.pragmatic-e2e-stack'
+    private static readonly MarkerText = 'the live-loop stack folder: live-loop-stack.ts down deletes it\n'
+    private static readonly NotAStackFolderPrefix = '[stack] kept (not a stack folder, no marker): '
+    private static readonly Loopback = '127.0.0.1'
+    private static readonly ConnectEvent = 'connect'
+    private static readonly ErrorEvent = 'error'
     private static readonly TlsFrontExitedMessage = 'the tenant plane TLS front exited during start; see tls-front.log in the stack folder, then run down'
     private static readonly TlsFrontNotReadyMessage = 'the tenant plane TLS front did not listen in time; see tls-front.log in the stack folder, then run down'
     private static readonly InternalSecretFileName = 'internal-api-secret'
@@ -549,7 +556,7 @@ export class LiveLoopStack
     }
 
     private readonly exec = new NodeExecFile()
-    private readonly secrets: string[] = [LiveLoopStackNames.OperatorPassword]
+    private readonly secrets: string[] = []
     private readonly kind = new KindCli(new NodeExecFile(), new NodeExecFile(KindCli.ImageLoadTimeoutMs))
     private readonly services: LiveLoopServices
     private readonly images: DevImages
@@ -654,6 +661,7 @@ export class LiveLoopStack
         }
         const dataRoot = join(N.StackDir, L.DataDirName)
         mkdirSync(dataRoot, { recursive: true })
+        writeFileSync(join(N.StackDir, L.MarkerFileName), L.MarkerText, L.Utf8)
 
         console.log(L.Steps.Images)
         await this.images.Build(LiveLoopStack.ImagesToBake(process.env))
@@ -689,13 +697,16 @@ export class LiveLoopStack
         await new LiveLoopPortalBuild().Build(this.services.PortalDirs())
 
         console.log(L.Steps.ControlPlane)
+        // A fresh operator password per run (the console reads it from the file), never one in source.
+        const operatorPassword = randomBytes(L.PasswordBytes).toString(L.HexEncoding)
+        this.HoldSecret(operatorPassword)
         const operatorPasswordFile = join(N.StackDir, L.OperatorPasswordFileName)
-        writeFileSync(operatorPasswordFile, N.OperatorPassword, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
+        writeFileSync(operatorPasswordFile, operatorPassword, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
         await this.RequireFreePorts()
         console.log(L.Steps.Postgres)
         const databaseUrlFile = await this.StartConsolePostgres()
         const internalSecretFile = this.WriteInternalSecret()
-        await this.WaitForPing(this.StartService(this.services.Console(process.env, dataRoot, databaseUrlFile, internalSecretFile), L.LogFileName, L.PidFileName))
+        await this.WaitForPing(this.StartService(this.services.Console(process.env, dataRoot, databaseUrlFile, internalSecretFile, operatorPasswordFile), L.LogFileName, L.PidFileName))
         console.log(L.Steps.Edge)
         await this.WaitForEdge(this.StartService(this.services.Edge(process.env, internalSecretFile), L.EdgeLogFileName, L.EdgePidFileName))
         console.log(L.Steps.TlsFront)
@@ -705,9 +716,9 @@ export class LiveLoopStack
 
         console.log(L.Steps.Seed)
         const api = new OperatorApiClient(N.OperatorBase)
-        await api.Login(N.OperatorEmail, N.OperatorPassword)
+        await api.Login(N.OperatorEmail, operatorPassword)
         const oneTime = await new LiveLoopStackSeed(api).Seed()
-        this.secrets.push(oneTime)
+        this.HoldSecret(oneTime)
 
         console.log(L.Steps.Agent)
         await new LiveLoopStackAgent(api).Install()
@@ -739,7 +750,6 @@ export class LiveLoopStack
         console.log(L.Steps.Done + L.DescriptorPath())
     }
 
-    /** Best effort, every step on its own: stop the edge and the console, remove the IdP container + volume, delete the cluster and the folder. */
     /**
      * The docker commands down runs, in order: the console's Postgres (with its anonymous volume), the tenant IdP's companion
      * Postgres before the IdP (it lives in the IdP's network namespace and mounts the IdP's data volume), then both volumes.
@@ -759,6 +769,11 @@ export class LiveLoopStack
         ]
     }
 
+    /**
+     * Best effort, every step on its own: stop the front, the edge and the console, remove the containers and volumes, delete
+     * the cluster, then the stack folder, but only when it is one (the default folder, or one holding the stack's marker): a
+     * mistyped PRAGMATIC_E2E_STACK_DIR naming a parent folder is never wiped.
+     */
     public async Down(): Promise<void>
     {
         const L = LiveLoopStack
@@ -773,7 +788,14 @@ export class LiveLoopStack
             await this.BestEffort(() => this.exec.Run(L.Docker, args))
         }
         await this.BestEffort(() => this.kind.DeleteCluster(N.ClusterName))
-        await this.BestEffort(async () => rmSync(N.StackDir, { recursive: true, force: true }))
+        if (LiveLoopStack.IsStackFolder(N.StackDir))
+        {
+            await this.BestEffort(async () => rmSync(N.StackDir, { recursive: true, force: true }))
+        }
+        else if (existsSync(N.StackDir))
+        {
+            console.log(L.NotAStackFolderPrefix + N.StackDir)
+        }
     }
 
     /**
@@ -785,7 +807,7 @@ export class LiveLoopStack
         const L = LiveLoopStack
         const N = LiveLoopStackNames
         const password = randomBytes(L.PasswordBytes).toString(L.HexEncoding)
-        this.secrets.push(password)
+        this.HoldSecret(password)
         const passwordFile = join(N.StackDir, L.ConsolePostgresPasswordFileName)
         writeFileSync(passwordFile, password, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
         await this.EnsureLocalImage(L.ConsolePostgresImage)
@@ -820,7 +842,7 @@ export class LiveLoopStack
     {
         const L = LiveLoopStack
         const secret = randomBytes(L.InternalSecretBytes).toString(L.HexEncoding)
-        this.secrets.push(secret)
+        this.HoldSecret(secret)
         const file = join(LiveLoopStackNames.StackDir, L.InternalSecretFileName)
         writeFileSync(file, secret, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
         return file
@@ -907,7 +929,6 @@ export class LiveLoopStack
     private async WaitForPort(child: ChildProcess, port: number, exitedMessage: string, notReadyMessage: string): Promise<void>
     {
         const L = LiveLoopStack
-        const probe = new NetPortProbe()
         const deadline = Date.now() + L.PingDeadlineMs
         while (Date.now() < deadline)
         {
@@ -915,13 +936,29 @@ export class LiveLoopStack
             {
                 throw new Error(exitedMessage)
             }
-            if (!await probe.Free(port))
+            if (await LiveLoopStack.Accepts(port))
             {
                 return
             }
             await new Promise<void>(r => setTimeout(r, L.PollMs))
         }
         throw new Error(notReadyMessage)
+    }
+
+    /** True when something accepts a connection on loopback `port` (a connect, never a bind: binding would race our own child). */
+    private static Accepts(port: number): Promise<boolean>
+    {
+        const L = LiveLoopStack
+        return new Promise(done =>
+        {
+            const socket = createConnection({ host: L.Loopback, port })
+            socket.once(L.ConnectEvent, () =>
+            {
+                socket.destroy()
+                done(true)
+            })
+            socket.once(L.ErrorEvent, () => done(false))
+        })
     }
 
     /** Waits for OUR edge the same way, on its /healthz. */
@@ -948,6 +985,18 @@ export class LiveLoopStack
             await new Promise<void>(r => setTimeout(r, L.PollMs))
         }
         throw new Error(notReadyMessage)
+    }
+
+    /** Holds a secret this run handles, so Redact hides it from any failure text. */
+    public HoldSecret(secret: string): void
+    {
+        this.secrets.push(secret)
+    }
+
+    /** True when `dir` is a stack folder `down` may delete: the default one, or one holding the marker `up` writes. */
+    public static IsStackFolder(dir: string): boolean
+    {
+        return resolve(dir) === resolve(LiveLoopStackNames.DefaultStackDir) || existsSync(join(dir, LiveLoopStack.MarkerFileName))
     }
 
     /** The text with every secret this run handled replaced by a placeholder. */

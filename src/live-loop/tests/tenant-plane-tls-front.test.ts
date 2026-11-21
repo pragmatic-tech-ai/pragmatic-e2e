@@ -66,7 +66,7 @@ describe('TenantPlaneTlsFront', () =>
     const call = (method: string, path: string, body?: string): Promise<{ status: number; headers: IncomingHttpHeaders; json: Record<string, unknown> }> =>
         new Promise((done, fail) =>
         {
-            const req = request({ host: '127.0.0.1', port, method, path, ca, servername: 'e2e.lvh.me', headers: { host: 'e2e.lvh.me:7443', origin: 'https://e2e.lvh.me:7443' } }, res =>
+            const req = request({ host: '127.0.0.1', port, method, path, ca, servername: 'e2e.lvh.me', headers: { host: 'e2e.lvh.me:7443', origin: 'https://e2e.lvh.me:7443', 'x-forwarded-for': '6.6.6.6', 'x-forwarded-proto': 'http', 'x-forwarded-host': 'evil.example', forwarded: 'for=6.6.6.6' } }, res =>
             {
                 let text = ''
                 res.on('data', chunk => { text += String(chunk) })
@@ -87,6 +87,15 @@ describe('TenantPlaneTlsFront', () =>
         assert.equal(headers.host, 'e2e.lvh.me:7443')
         assert.equal(headers.origin, 'https://e2e.lvh.me:7443')
         assert.equal(headers['x-forwarded-proto'], 'https')
+    })
+
+    it('replaces the forwarding headers a client sent with its own (the tenant listener trusts them)', async () =>
+    {
+        const headers = (await call('GET', '/')).json.headers as Record<string, string>
+        assert.equal(headers['x-forwarded-for'], '127.0.0.1')
+        assert.equal(headers['x-forwarded-proto'], 'https')
+        assert.equal(headers['x-forwarded-host'], undefined)
+        assert.equal(headers.forwarded, undefined)
     })
 
     it('passes every Set-Cookie of the answer back', async () =>

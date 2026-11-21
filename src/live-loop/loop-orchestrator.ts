@@ -11,7 +11,7 @@
  *   npx tsx src/live-loop/loop-orchestrator.ts db-exec [--stack <stack.json>] --sql <sql>
  *   npx tsx src/live-loop/loop-orchestrator.ts teardown [--stack <stack.json>]
  *
- * `--stack` defaults to ~/.pragmatic/e2e-stack/stack.json.
+ * `--stack` defaults to stack.json in the stack folder (~/.pragmatic/e2e-stack, or PRAGMATIC_E2E_STACK_DIR).
  */
 import { randomBytes } from 'node:crypto'
 import { resolve } from 'node:path'
