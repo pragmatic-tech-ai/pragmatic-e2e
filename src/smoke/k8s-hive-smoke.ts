@@ -2,7 +2,7 @@
  * GATED real-cluster smoke for the k8s Hive Orchestrator. NOT part of `tsx --test`.
  *
  * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster) and the
- * `pragmatic-server:dev` image on the cluster's node (`dev/dev-cluster.ts up` loads it there;
+ * `pragmatic-env-server:dev` image on the cluster's node (`dev/dev-cluster.ts up` loads it there;
  * the manifest uses imagePullPolicy IfNotPresent). Run with:
  *
  *   npx tsx src/smoke/k8s-hive-smoke.ts
@@ -37,7 +37,7 @@ export class K8sHiveSmoke
     private static readonly EnvName = K8sHiveSmoke.EnvPrefix + randomBytes(K8sHiveSmoke.SuffixBytes).toString(K8sHiveSmoke.Hex)
     private static readonly HiveId = 'smoke-hive'
     private static readonly TenantId = 'smoke-tenant'
-    private static readonly Image = 'pragmatic-server:dev'
+    private static readonly Image = 'pragmatic-env-server:dev'
     private static readonly KeysDirName = 'keys'
     private static readonly SignaturesFileName = 'signatures.json'
     private static readonly TempDirPrefix = 'k8s-smoke-prov-'

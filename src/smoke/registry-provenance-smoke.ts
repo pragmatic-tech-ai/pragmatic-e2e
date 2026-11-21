@@ -2,7 +2,7 @@
  * GATED real-cluster smoke for SP-HIVE-3 image provenance. NOT part of `tsx --test`.
  *
  * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster), docker, and the
- * `pragmatic-server:dev` image in the local docker image store. Run with:
+ * `pragmatic-env-server:dev` image in the local docker image store. Run with:
  *
  *   npx tsx src/smoke/registry-provenance-smoke.ts
  *
@@ -31,7 +31,7 @@ export class RegistryProvenanceSmoke
     private static readonly Hex = 'hex'
     private static readonly HiveId = 'prov-hive'
     private static readonly TenantId = 'prov-tenant'
-    private static readonly BaseImage = 'pragmatic-server:dev'
+    private static readonly BaseImage = 'pragmatic-env-server:dev'
     private static readonly RegistryEndpoint = 'localhost:5000'
     private static readonly RegistryImage = 'registry:2'
     private static readonly RegistryPortMap = '127.0.0.1:5000:5000'

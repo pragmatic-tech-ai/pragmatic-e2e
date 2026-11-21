@@ -2,7 +2,7 @@
  * Builds the platform's dev images, each from its own container repository's bake (the image of record: the
  * repository's root Dockerfile and docker-bake.hcl), into the local docker store under the name the platform admin
  * console runs in local mode (pragmatic-platform-admin's DevPlatformImages: `pragmatic-<app>:dev`, the env server
- * `pragmatic-server:dev` and Postgres `pragmatic-postgres:local`). The dev cluster and the live-loop stack load them into
+ * `pragmatic-env-server:dev` and Postgres `pragmatic-postgres:local`). The dev cluster and the live-loop stack load them into
  * kind; the console signs them as it always did.
  *
  *   npx tsx src/dev/dev-images.ts                      # every image the dev stack runs

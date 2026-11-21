@@ -1,7 +1,7 @@
 /**
  * GATED integration smoke for the control plane. NOT part of `tsx --test`.
  *
- * Requires Docker running and the `pragmatic-server:dev` (environments) and `pragmatic-tenant-idp:dev` (the tenant IdP)
+ * Requires Docker running and the `pragmatic-env-server:dev` (environments) and `pragmatic-tenant-idp:dev` (the tenant IdP)
  * images baked (`npx tsx src/dev/dev-images.ts pragmatic-env-server pragmatic-tenant-idp`; see src/dev/README.md, "Dev
  * images"). Run with:
  *

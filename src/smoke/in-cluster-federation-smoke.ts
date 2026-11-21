@@ -2,7 +2,7 @@
  * GATED real-cluster, real-browser smoke for in-cluster split-host IdP federation (SP-HIVE-6c). OPERATOR-RUN ONLY: NOT a
  * *.test.ts, NOT part of `tsx --test` / `npm test`, never executed by CI. Supersedes the retired Docker-era idp-federation-smoke.
  *
- * Requires on PATH: `kind`, `kubectl`, a running Docker daemon, FRESH `pragmatic-server:dev` (environments),
+ * Requires on PATH: `kind`, `kubectl`, a running Docker daemon, FRESH `pragmatic-env-server:dev` (environments),
  * `pragmatic-tenant-admin:dev`, `pragmatic-tenant-idp:dev` and `pragmatic-postgres:local` images in the local docker image
  * store (baked by `npx tsx src/dev/dev-images.ts`; all loaded onto the kind node), the Playwright Chromium browser, host port 443
  * free, and public DNS for `*.localtest.me`

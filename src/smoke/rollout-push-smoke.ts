@@ -2,7 +2,7 @@
  * GATED real-cluster smoke for the SP-HIVE-4 rollout PUSH path. NOT part of `tsx --test`.
  *
  * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster), docker, and the
- * `pragmatic-server:dev` image in the local docker image store. Run with:
+ * `pragmatic-env-server:dev` image in the local docker image store. Run with:
  *
  *   npx tsx src/smoke/rollout-push-smoke.ts
  *
@@ -53,7 +53,7 @@ export class RolloutPushSmoke
     private static readonly ClientId = 'push-client'
     private static readonly TenantId = 'push-tenant'
     private static readonly HiveId = 'push-hive'
-    private static readonly BaseImage = 'pragmatic-server:dev'
+    private static readonly BaseImage = 'pragmatic-env-server:dev'
     private static readonly ImageV1 = 'pragmatic-server:v1'
     private static readonly ImageV2 = 'pragmatic-server:v2'
     private static readonly VersionV1 = 'v1'

@@ -1,8 +1,8 @@
 {
-  "pragmatic-env-gateway": "fac3ef42a19247aa6dc11c394db3a2a0cbb7e9a8",
-  "pragmatic-env-server": "e36bcfe5999fdb52cc4a189a65baace32fd5cd13",
-  "pragmatic-platform-admin": "c41cc7cd693f1186f26ab27aef5a03790fa3a0e5",
-  "pragmatic-platform-edge": "1d9b00b479647eb9b82c982867478e8a2a5c7c7f",
-  "pragmatic-tenant-admin": "2527c9d9e92324f506e9e0dea5fe99dd1aa7778e",
-  "pragmatic-tenant-idp": "b326177785b486aa368c1cf97388124fedd81eee"
+  "pragmatic-env-gateway": "a99d3de3a710ff453f1870e5b7d5d2da5259bd9d",
+  "pragmatic-env-server": "bbc5a3420e90fed705495972c37418ebb4de1ded",
+  "pragmatic-platform-admin": "6ca558e82d14fd8b544428ee03b1fe8ce657c35c",
+  "pragmatic-platform-edge": "c0b57144dc67e8ea381b21924ae0edd35eee9a7c",
+  "pragmatic-tenant-admin": "32a1287f8d9955eb29fc21a00e24acc688665b07",
+  "pragmatic-tenant-idp": "ae5faf2cea8897f6d6f5c18ca35515c5b6207f39"
 }

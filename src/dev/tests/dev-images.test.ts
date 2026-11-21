@@ -90,7 +90,7 @@ describe('DevImages.BakeCommands', () =>
     it('bakes the components step, then the image target with the components override, loaded under the dev tag, for amd64', () =>
     {
         const root = '/repos/pragmatic-env-server'
-        assert.deepEqual(DevImages.BakeCommands(ReleaseApp.EnvServer, root, DevImagesFx.Npmrc), DevImagesFx.Expected(ReleaseApp.EnvServer, 'pragmatic-server:dev', root))
+        assert.deepEqual(DevImages.BakeCommands(ReleaseApp.EnvServer, root, DevImagesFx.Npmrc), DevImagesFx.Expected(ReleaseApp.EnvServer, 'pragmatic-env-server:dev', root))
     })
 
     it('gives every release app the exact steps, its image target named after it and tagged as the console runs it in local mode', () =>
@@ -98,7 +98,7 @@ describe('DevImages.BakeCommands', () =>
         const tags = new Map<ReleaseApp, string>([
             [ReleaseApp.PlatformAdmin, 'pragmatic-platform-admin:dev'],
             [ReleaseApp.PlatformEdge, 'pragmatic-platform-edge:dev'],
-            [ReleaseApp.EnvServer, 'pragmatic-server:dev'],
+            [ReleaseApp.EnvServer, 'pragmatic-env-server:dev'],
             [ReleaseApp.EnvGateway, 'pragmatic-env-gateway:dev'],
             [ReleaseApp.HiveAgent, 'pragmatic-hive-agent:dev'],
             [ReleaseApp.TenantAdmin, 'pragmatic-tenant-admin:dev'],
@@ -120,7 +120,7 @@ describe('DevImages tags', () =>
     it('are the platform admin console\'s dev images: each app its own, the env server as the tenant plane names it', () =>
     {
         assert.deepEqual(DevImages.DevStackApps.map(app => DevImages.TagOf(app)), [
-            'pragmatic-server:dev',
+            'pragmatic-env-server:dev',
             'pragmatic-ui-unpack:dev',
             'pragmatic-hive-agent:dev',
             'pragmatic-tenant-admin:dev',
@@ -180,7 +180,7 @@ describe('DevImages.Build', () =>
             const runner = new RecordingRunner()
             await DevImagesFx.Builder(dir, runner).Build([ReleaseApp.EnvServer, ReleaseApp.UiUnpack])
             assert.deepEqual(runner.Commands, [
-                ...DevImagesFx.Expected(ReleaseApp.EnvServer, 'pragmatic-server:dev', join(dir, ReleaseApp.EnvServer)),
+                ...DevImagesFx.Expected(ReleaseApp.EnvServer, 'pragmatic-env-server:dev', join(dir, ReleaseApp.EnvServer)),
                 ...DevImagesFx.Expected(ReleaseApp.UiUnpack, 'pragmatic-ui-unpack:dev', join(dir, ReleaseApp.UiUnpack)),
             ])
         })

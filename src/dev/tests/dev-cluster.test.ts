@@ -58,7 +58,7 @@ class FakeDocker implements IExecFile
 
 class DevClusterFx
 {
-    public static readonly DevImages = ['pragmatic-server:dev', 'pragmatic-ui-unpack:dev', 'pragmatic-hive-agent:dev', 'pragmatic-tenant-admin:dev', 'pragmatic-tenant-idp:dev', 'pragmatic-postgres:local']
+    public static readonly DevImages = ['pragmatic-env-server:dev', 'pragmatic-ui-unpack:dev', 'pragmatic-hive-agent:dev', 'pragmatic-tenant-admin:dev', 'pragmatic-tenant-idp:dev', 'pragmatic-postgres:local']
     public static readonly AllImages = [...DevClusterFx.DevImages, 'registry:2', 'postgres:16']
 
     public static Without(image: string): string[]
@@ -100,10 +100,10 @@ describe('DevCluster.Up', () =>
     it('refuses when a dev image was never baked, naming the command that bakes it, and never tries to pull it', async () =>
     {
         const kind = new FakeKind()
-        const docker = new FakeDocker(DevClusterFx.Without('pragmatic-server:dev'))
+        const docker = new FakeDocker(DevClusterFx.Without('pragmatic-env-server:dev'))
         await assert.rejects(DevClusterFx.Silent(kind, docker).Up(),
-            /pragmatic-server:dev is not in the local docker store; bake it first from this repository \(npx tsx src\/dev\/dev-images\.ts pragmatic-env-server\)/)
-        assert.ok(!docker.Calls.includes('docker pull pragmatic-server:dev'))
+            /pragmatic-env-server:dev is not in the local docker store; bake it first from this repository \(npx tsx src\/dev\/dev-images\.ts pragmatic-env-server\)/)
+        assert.ok(!docker.Calls.includes('docker pull pragmatic-env-server:dev'))
         assert.ok(!kind.Calls.some(c => c.startsWith('load ')))
     })
 })

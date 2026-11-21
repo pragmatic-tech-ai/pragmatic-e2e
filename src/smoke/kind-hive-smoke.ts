@@ -2,7 +2,7 @@
  * GATED real-cluster smoke for the kind (Local + Provision) Hive Orchestrator. NOT part of `tsx --test`
  * and NOT part of `npm test`.
  *
- * Requires the real `kind` CLI on PATH, a running Docker daemon, and the `pragmatic-server:dev` image
+ * Requires the real `kind` CLI on PATH, a running Docker daemon, and the `pragmatic-env-server:dev` image
  * in the local docker image store. Run manually with:
  *
  *   npx tsx src/smoke/kind-hive-smoke.ts
@@ -50,7 +50,7 @@ export class KindHiveSmoke
     private static readonly HiveIdB = 'ks-b-' + KindHiveSmoke.RunSuffix
     private static readonly TenantId = 'smoke-tenant'
     private static readonly EnvPrefix = 'kind-smoke-'
-    private static readonly Image = 'pragmatic-server:dev'
+    private static readonly Image = 'pragmatic-env-server:dev'
     private static readonly KeysDirName = 'keys'
     private static readonly SignaturesFileName = 'signatures.json'
     private static readonly TempDirPrefix = 'kind-smoke-prov-'

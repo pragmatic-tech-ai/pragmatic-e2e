@@ -2,7 +2,7 @@
  * GATED real-cluster, real-browser end-to-end smoke for in-cluster UI serving (SP-HIVE UI-serving, Spec 4). OPERATOR-RUN ONLY:
  * NOT a *.test.ts, NOT part of `tsx --test` / `npm test`, never executed by CI.
  *
- * Requires on PATH: `docker`, `kind`, `kubectl`, a running Docker daemon, FRESH `pragmatic-server:dev`, `pragmatic-ui-unpack:dev`,
+ * Requires on PATH: `docker`, `kind`, `kubectl`, a running Docker daemon, FRESH `pragmatic-env-server:dev`, `pragmatic-ui-unpack:dev`,
  * `pragmatic-tenant-idp:dev` and `pragmatic-postgres:local` images in the local docker image store (baked by
  * `npx tsx src/dev/dev-images.ts`), network access to pull `registry:2`, the Playwright Chromium browser, host ports 443 and InClusterRegistry.NodePort
  * (30500) free, and public DNS for `*.localtest.me` (resolves to 127.0.0.1) for the Node-side IdP admin calls. Run with:

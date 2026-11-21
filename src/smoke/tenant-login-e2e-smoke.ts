@@ -2,7 +2,7 @@
  * GATED real-login browser e2e smoke (SP-HIVE-7 deferral #11). NOT a *.test.ts and NOT in any test glob.
  *
  * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster), FRESH `pragmatic-tenant-idp:dev` (the
- * per-tenant IdP container) and `pragmatic-server:dev` (the hive workload) images in the local image store (baked by
+ * per-tenant IdP container) and `pragmatic-env-server:dev` (the hive workload) images in the local image store (baked by
  * `npx tsx src/dev/dev-images.ts pragmatic-tenant-idp pragmatic-env-server`), and the Playwright Chromium browser. Run with:
  *
  *   npx tsx src/smoke/tenant-login-e2e-smoke.ts
@@ -140,7 +140,7 @@ export class TenantLoginE2eSmoke
     private static readonly K8sContext = SmokeCluster.Context()
     private static readonly SigningKeyRef = 'smoke-signing'
 
-    private static readonly BaseImage = 'pragmatic-server:dev'
+    private static readonly BaseImage = 'pragmatic-env-server:dev'
     private static readonly ImageV1 = 'pragmatic-server:v1'
     private static readonly ImageV2 = 'pragmatic-server:v2'
     private static readonly VersionV1 = 'v1'

@@ -298,7 +298,7 @@ describe('LiveLoopStack.KindImages', () =>
 {
     it('loads the env server, UI unpack and hive agent dev images, the registry and environment Postgres onto the kind node', () =>
     {
-        assert.deepEqual(LiveLoopStack.KindImages(), ['pragmatic-server:dev', 'pragmatic-ui-unpack:dev', 'pragmatic-hive-agent:dev', 'registry:2', 'postgres:16'])
+        assert.deepEqual(LiveLoopStack.KindImages(), ['pragmatic-env-server:dev', 'pragmatic-ui-unpack:dev', 'pragmatic-hive-agent:dev', 'registry:2', 'postgres:16'])
     })
 
     it('loads only images the stack bakes or pulls: every dev image among them is one of the live loop\'s baked images', () =>

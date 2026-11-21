@@ -124,7 +124,7 @@ class RuntimeEnvironment
     private static readonly OkStatus = 200
     private static readonly HealthTimeoutMs = 120000
     private static readonly HealthPollMs = 1000
-    private static readonly ImageMissing = 'the pragmatic-server:sp0 image is absent: bake the env server dev image first (npx tsx src/dev/dev-images.ts pragmatic-env-server), then docker tag pragmatic-server:dev pragmatic-server:sp0'
+    private static readonly ImageMissing = 'the pragmatic-server:sp0 image is absent: bake the env server dev image first (npx tsx src/dev/dev-images.ts pragmatic-env-server), then docker tag pragmatic-env-server:dev pragmatic-server:sp0'
     private static readonly HealthNeverReady = 'the runtime environment container never reported /healthz=200'
     private static readonly PortEnv = 'PRAGMATIC_PORT=8080'
     private static readonly BaseDirEnv = 'PRAGMATIC_BASE_DIR=/home/pragmatic/data'

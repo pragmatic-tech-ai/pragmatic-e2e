@@ -1,7 +1,7 @@
 /**
  * GATED real-cluster smoke for in-cluster environment creation through the tenant-admin orchestration
  * path. NOT part of `tsx --test`. Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster) and the
- * `pragmatic-server:dev` image in the node's image store. Run with:
+ * `pragmatic-env-server:dev` image in the node's image store. Run with:
  *
  *   npx tsx src/smoke/in-cluster-env-create-smoke.ts
  *
@@ -84,7 +84,7 @@ export class InClusterEnvCreateSmoke
     private static readonly Hex = 'hex'
     private static readonly HiveId = 'icc-smoke-hive'
     private static readonly TenantId = 'icc-smoke-tenant'
-    private static readonly Image = 'pragmatic-server:dev'
+    private static readonly Image = 'pragmatic-env-server:dev'
     private static readonly KeysDirName = 'keys'
     private static readonly SignaturesFileName = 'signatures.json'
     private static readonly RegistryFileName = 'environments.json'

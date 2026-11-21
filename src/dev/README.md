@@ -48,7 +48,7 @@ container + volume) persists. To start over, remove the container and `docker vo
 ## Dev images
 
 The console runs each platform app from its own locally built image in local mode (pragmatic-platform-admin's
-`DevPlatformImages`): `pragmatic-server:dev` (the env server, the name the tenant plane gives every environment),
+`DevPlatformImages`): `pragmatic-env-server:dev` (the env server, the name the tenant plane gives every environment),
 `pragmatic-ui-unpack:dev`, `pragmatic-hive-agent:dev`, `pragmatic-tenant-admin:dev`, `pragmatic-tenant-idp:dev` and
 `pragmatic-postgres:local`. `dev-up.sh` bakes them first, each from its container repository's own `docker-bake.hcl`
 (two steps: `components`, then the image, `--load`ed under the dev tag), from the checkouts in
