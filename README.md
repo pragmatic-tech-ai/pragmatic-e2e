@@ -10,6 +10,7 @@ container repository can own it. Seeded from pragmatic-server (dev-kit plan A3, 
 | `src/smoke/` | Operator-run smokes against Docker, kind and live consoles (not `*.test.ts`; each file says how to run it) |
 | `src/e2e/` | Tests that span containers: the consoles (platform admin, tenant admin, edge, IdP), the env cluster (env server and gateway) and the capstones |
 | `src/stack/` | `RepositoryRoots` (where the services' checkouts are) and `SiblingCheckouts` (the pinned sources the tests import) |
+| `src/journey/` | The stage F journey harness: the owner journey against the **live** platform, leg by leg, per hive path (`npm run journey`) |
 
 ## Two kinds of sibling repositories
 
@@ -68,6 +69,34 @@ PRAGMATIC_E2E_STACK_DIR=/mnt/c/Users/visor/.pragmatic/e2e-stack` for `up` and `d
 `PLEXUS_E2E_STACK=C:\Users\visor\.pragmatic\e2e-stack\stack.json`, `PRAGMATIC_E2E_WSL_DISTRO=hive` and
 `PRAGMATIC_E2E_REPO=/root/work/architecture-agent/pragmatic-e2e`. The full command list is in dev-kit
 `docs/superpowers/plans/2026-11-21-hive-laptop-live-loop.md`.
+
+## The journey (stage F)
+
+`npm run journey` drives the deployed platform as a synthetic customer per hive path (`enrolled`, `delegated`,
+`hosted`): website → cabinet registration → central login sign-up (the verification email is opened by the
+`journey-mail` Email Worker) → Paddle **sandbox** checkout → … → Plexus and deploy, then cleans every leg it started
+in reverse order (also after a failure). Legs whose live dependencies are not there yet are reported **pending** on
+what delivers them (`src/journey/journey.config.json` `liveDependencies`); they never pass by default. Design and
+legs: dev-kit `docs/superpowers/plans/2026-11-20-f-journey-tests.md`; what it touches and how to clean by hand:
+pragmatic-infrastructure `runbooks/journey-tests.md`.
+
+```
+npm run journey -- --paths enrolled          # a new run (default: all three paths)
+npm run journey -- resume <run id>           # continue a killed run, then clean
+npm run journey:clean -- <run id>            # only clean a killed run
+```
+
+Ctrl-C, SIGTERM or SIGHUP stops a run gracefully (the running leg is aborted, the path still cleaned); a hard kill needs
+`journey:clean`. `resume` continues the unfinished paths of a killed run; a resume or clean writes its own
+`journey-report.<mode>-<time>.{json,md}` beside the run's report.
+
+It needs `PRAGMATIC_JOURNEY_PASSWORD_SEED_FILE` (the test-only seed the customers' passwords derive from; never the
+password itself) and Playwright's full Chromium (`npx playwright install chromium`; the headless shell starves Mural's
+rendering). Each run writes `journey-runs/<run id>/` (gitignored): per path `context.json` (ids and states, never a
+secret), `steps.log` (redacted), failure screenshots of allow-listed public pages only, and `journey-report.{json,md}`.
+On the hive laptop: `hive.cmd run --wsl <this checkout> --env
+PRAGMATIC_JOURNEY_PASSWORD_SEED_FILE=/mnt/c/Users/visor/.pragmatic/journey/password-seed --fetch journey-runs -- npm run
+journey -- --paths enrolled`.
 
 ## License
 

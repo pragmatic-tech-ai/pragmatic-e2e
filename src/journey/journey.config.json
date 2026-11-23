@@ -1,0 +1,17 @@
+{
+  "websiteUrl": "https://pragmatic-tech.ai",
+  "cabinetUrl": "https://cabinet.pragmatic-tech.ai",
+  "centralIssuer": "https://login.pragmatic-tech.ai/realms/central",
+  "edgeUrl": "https://agent.pragmatic-tech.ai",
+  "planName": "Starter",
+  "emailDomain": "pragmatic-lab.com",
+  "journeyDnsSubdomain": "journey.pragmatic-lab.com",
+  "customerCluster": "pragmatic-customer",
+  "liveDependencies": [
+    "website",
+    "central-login",
+    "cabinet",
+    "paddle-sandbox",
+    "journey-mail"
+  ]
+}

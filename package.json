@@ -14,8 +14,11 @@
   },
   "scripts": {
     "siblings": "tsx src/stack/sibling-checkouts.ts",
+    "journey": "tsx src/bin/journey.ts",
+    "journey:clean": "tsx src/bin/journey.ts clean",
     "test": "tsx --test \"src/**/*.test.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check": "tsc --noEmit && tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.1",
