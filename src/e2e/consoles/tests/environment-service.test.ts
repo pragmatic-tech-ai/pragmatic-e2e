@@ -506,7 +506,7 @@ class Harness
             new HiveRegistry(join(dir, 'hives.json')),
             h.Registry)
         await h.Directory.Load()
-        await h.Directory.CreateClient({ id: 'c1', displayName: 'C1' })
+        await h.Directory.RecordClient({ id: 'c1', displayName: 'C1' })
         await h.Directory.CreateTenant({ id: 'plat-t1', clientId: 'c1', displayName: 'T1' })
         await h.Directory.CreateTenant({ id: 'plat-t2', clientId: 'c1', displayName: 'T2' })
         await h.Directory.CreateHive({

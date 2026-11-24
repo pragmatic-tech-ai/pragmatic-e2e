@@ -3,11 +3,14 @@ import { describe, it } from 'node:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { LiveLoopPortalBuild, LiveLoopServices, LiveLoopStack, LiveLoopStackAgent, LiveLoopStackNames, LiveLoopStackSeed, type IPortalBuildRunner, type LiveLoopStackDescriptor } from '../live-loop-stack.js'
+import { LiveLoopPortalBuild, LiveLoopServices, LiveLoopStack, LiveLoopStackAgent, LiveLoopStackNames, LiveLoopStackSeed, type IPortalBuildRunner, type LiveLoopStackDescriptor, type LiveLoopStackFiles } from '../live-loop-stack.js'
 import { RepositoryMissingError, RepositoryRoots } from '../../stack/repository-roots.js'
 import type { ApiAnswer, IOperatorApi } from '../operator-api-client.js'
 import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { DevImages } from '../../dev/dev-images.js'
+import { LiveLoopSignIn } from '../live-loop-stack-args.js'
+import { type IEntitlementsLink, LiveLoopEntitlements } from '../live-loop-entitlements.js'
+import type { EntitlementStatement } from '@pragmatic-tech-ai/pragmatic-entitlements-contract'
 
 class FakeOperatorApi implements IOperatorApi
 {
@@ -28,14 +31,35 @@ class FakeOperatorApi implements IOperatorApi
     }
 }
 
+/** The clients ledger's link as the seed sees it: records each statement and answers `status`. */
+class FakeEntitlementsLink implements IEntitlementsLink
+{
+    public readonly Statements: EntitlementStatement[] = []
+
+    public constructor(private readonly status: number = LiveLoopEntitlements.StatusOk)
+    {
+    }
+
+    public async PostStatement(statement: EntitlementStatement): Promise<number>
+    {
+        this.Statements.push(statement)
+        return this.status
+    }
+}
+
 class SeedFx
 {
     public static readonly OneTime = 'one-time-pw'
+    public static readonly Now = new Date('2026-11-24T10:00:00.000Z')
+
+    public static Seed(api: IOperatorApi, link: IEntitlementsLink = new FakeEntitlementsLink()): LiveLoopStackSeed
+    {
+        return new LiveLoopStackSeed(api, link, () => SeedFx.Now)
+    }
 
     public static Answers(): Record<string, ApiAnswer>
     {
         return {
-            '/api/clients': { status: 201, body: {} },
             '/api/tenants': { status: 201, body: { owner: { email: LiveLoopStackNames.OwnerEmail, password: SeedFx.OneTime } } },
             '/api/hives': { status: 201, body: {} },
         }
@@ -44,13 +68,15 @@ class SeedFx
 
 describe('LiveLoopStackSeed', () =>
 {
-    it('creates the client, the tenant with the short owner email and the hive attached to the kind context, and returns the one-time password', async () =>
+    it('delivers the client\'s ledger statement, then creates the tenant with the short owner email and the hive attached to the kind context, and returns the one-time password', async () =>
     {
         const api = new FakeOperatorApi(SeedFx.Answers())
-        assert.equal(await new LiveLoopStackSeed(api).Seed(), SeedFx.OneTime)
-        assert.deepEqual(api.Calls.map(c => c.method + ' ' + c.path), ['POST /api/clients', 'POST /api/tenants', 'POST /api/hives'])
-        assert.deepEqual(api.Calls[1]!.body, { id: 'e2e', clientId: 'e2e-client', displayName: 'E2E', ownerEmail: 'o@t.io' })
-        assert.deepEqual(api.Calls[2]!.body, {
+        const link = new FakeEntitlementsLink()
+        assert.equal(await SeedFx.Seed(api, link).Seed(), SeedFx.OneTime)
+        assert.deepEqual(link.Statements, [LiveLoopEntitlements.Statement('e2e-client', 'E2E Client', SeedFx.Now)])
+        assert.deepEqual(api.Calls.map(c => c.method + ' ' + c.path), ['POST /api/tenants', 'POST /api/hives'], 'operators create no client (the ledger owns them)')
+        assert.deepEqual(api.Calls[0]!.body, { id: 'e2e', clientId: 'e2e-client', displayName: 'E2E', ownerEmail: 'o@t.io' })
+        assert.deepEqual(api.Calls[1]!.body, {
             id: 'e2e-hive', tenantId: 'e2e', displayName: 'E2E Hive',
             cluster: { backend: 'local', mode: 'attach', configRef: 'kind-pragmatic-e2e' },
             registry: { mode: 'attach' },
@@ -62,15 +88,22 @@ describe('LiveLoopStackSeed', () =>
         const answers = SeedFx.Answers()
         answers['/api/tenants'] = { status: 409, body: { error: 'exists' } }
         const api = new FakeOperatorApi(answers)
-        await assert.rejects(new LiveLoopStackSeed(api).Seed(), /seed step failed: \/api\/tenants status 409/)
-        assert.equal(api.Calls.length, 2)
+        await assert.rejects(SeedFx.Seed(api).Seed(), /seed step failed: \/api\/tenants status 409/)
+        assert.equal(api.Calls.length, 1)
+    })
+
+    it('stops before any operator call when the console refuses the client\'s statement', async () =>
+    {
+        const api = new FakeOperatorApi(SeedFx.Answers())
+        await assert.rejects(SeedFx.Seed(api, new FakeEntitlementsLink(401)).Seed(), /seed step failed: \/internal\/entitlements\/v1\/statements status 401/)
+        assert.equal(api.Calls.length, 0)
     })
 
     it('refuses a tenant answer without the owner password', async () =>
     {
         const answers = SeedFx.Answers()
         answers['/api/tenants'] = { status: 201, body: {} }
-        await assert.rejects(new LiveLoopStackSeed(new FakeOperatorApi(answers)).Seed(), /seed step failed: \/api\/tenants/)
+        await assert.rejects(SeedFx.Seed(new FakeOperatorApi(answers)).Seed(), /seed step failed: \/api\/tenants/)
     })
 })
 
@@ -183,6 +216,8 @@ class ServicesFx
     public static readonly UrlFile = join('S:', 'stack', 'postgres-url')
     public static readonly SecretFile = join('S:', 'stack', 'internal-api-secret')
     public static readonly OperatorPasswordFile = join('S:', 'stack', 'operator-password')
+    public static readonly EntitlementsSecretFile = join('S:', 'stack', 'entitlements-link-secret')
+    public static readonly InheritedTenantPlaneUrl = 'https://inherited.example'
 
     public static With(body: (dir: string, services: LiveLoopServices) => void): void
     {
@@ -219,7 +254,7 @@ describe('LiveLoopServices', () =>
         ServicesFx.With((dir, services) =>
         {
             const admin = join(dir, 'pragmatic-platform-admin')
-            const spec = services.Console({ KEEP: 'me' }, ServicesFx.DataRoot, ServicesFx.UrlFile, ServicesFx.SecretFile, ServicesFx.OperatorPasswordFile)
+            const spec = services.Console({ KEEP: 'me' }, ServicesFx.DataRoot, ServicesFx.UrlFile, ServicesFx.SecretFile, ServicesFx.OperatorPasswordFile, ServicesFx.EntitlementsSecretFile)
             assert.equal(spec.env.PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE, ServicesFx.OperatorPasswordFile)
             assert.equal(spec.env.PRAGMATIC_ADMIN_OPERATOR_PASSWORD, undefined)
             assert.equal(spec.cwd, admin)
@@ -233,6 +268,7 @@ describe('LiveLoopServices', () =>
             assert.equal(spec.env.PRAGMATIC_ADMIN_INTERNAL_PORT, String(N.InternalApiPort))
             assert.equal(spec.env.PRAGMATIC_ADMIN_INTERNAL_BIND, '127.0.0.1')
             assert.equal(spec.env.PRAGMATIC_INTERNAL_API_SECRET_FILE, ServicesFx.SecretFile)
+            assert.equal(spec.env.PRAGMATIC_ADMIN_ENTITLEMENTS_SECRET_FILE, ServicesFx.EntitlementsSecretFile, 'the clients ledger\'s link the seed uses')
             assert.equal(spec.env.PRAGMATIC_TENANT_ADMIN_PORT, String(N.TenantPlanePort))
             assert.equal(spec.env.PRAGMATIC_TENANT_PORTAL_DIR, join(dir, 'pragmatic-tenant-admin', 'tenant-portal', 'dist'))
             assert.equal(spec.env.PRAGMATIC_AGENT_CHANNEL_PORT, String(N.AgentChannelPort))
@@ -243,11 +279,36 @@ describe('LiveLoopServices', () =>
     {
         ServicesFx.With((_dir, services) =>
         {
-            const spec = services.Console({}, ServicesFx.DataRoot, ServicesFx.UrlFile, ServicesFx.SecretFile, ServicesFx.OperatorPasswordFile)
+            const spec = services.Console({}, ServicesFx.DataRoot, ServicesFx.UrlFile, ServicesFx.SecretFile, ServicesFx.OperatorPasswordFile, ServicesFx.EntitlementsSecretFile)
             assert.equal(spec.env.PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME, 'https')
             assert.equal(spec.env.PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT, String(N.TenantPlaneTlsPort))
             assert.equal(spec.env.PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY, 'true')
             assert.equal(N.TenantPlaneOrigin, 'https://' + N.TenantHost + ':' + String(N.TenantPlaneTlsPort))
+        })
+    })
+
+    it('realm mode (the default) turns the desktop realm sign-in on and names the tenant plane on the TLS front', () =>
+    {
+        ServicesFx.With((_dir, services) =>
+        {
+            const spec = services.Console({}, ServicesFx.DataRoot, ServicesFx.UrlFile, ServicesFx.SecretFile, ServicesFx.OperatorPasswordFile, ServicesFx.EntitlementsSecretFile)
+            assert.equal(spec.env[LiveLoopServices.DesktopRealmSignInVar], 'on')
+            assert.equal(spec.env[LiveLoopServices.DesktopTenantPlaneUrlVar], N.TenantPlaneOrigin)
+            assert.equal(LiveLoopServices.DesktopRealmSignInVar, 'PRAGMATIC_TENANT_ADMIN_DESKTOP_REALM_SIGN_IN', 'the variable the console reads')
+            assert.equal(LiveLoopServices.DesktopTenantPlaneUrlVar, 'PRAGMATIC_DESKTOP_TENANT_PLANE_URL')
+            assert.deepEqual(LiveLoopServices.SignInEnv(LiveLoopSignIn.Realm), { [LiveLoopServices.DesktopRealmSignInVar]: 'on', [LiveLoopServices.DesktopTenantPlaneUrlVar]: N.TenantPlaneOrigin })
+        })
+    })
+
+    it('transitional mode turns it off and leaves the desktop tenant plane address as given', () =>
+    {
+        ServicesFx.With((_dir, services) =>
+        {
+            assert.equal(services.Console({}, ServicesFx.DataRoot, ServicesFx.UrlFile, ServicesFx.SecretFile, ServicesFx.OperatorPasswordFile, ServicesFx.EntitlementsSecretFile, LiveLoopSignIn.Transitional).env[LiveLoopServices.DesktopTenantPlaneUrlVar], undefined,
+                'unset: the console derives its loopback tenant listener')
+            const spec = services.Console({ [LiveLoopServices.DesktopTenantPlaneUrlVar]: ServicesFx.InheritedTenantPlaneUrl }, ServicesFx.DataRoot, ServicesFx.UrlFile, ServicesFx.SecretFile, ServicesFx.OperatorPasswordFile, ServicesFx.EntitlementsSecretFile, LiveLoopSignIn.Transitional)
+            assert.equal(spec.env[LiveLoopServices.DesktopRealmSignInVar], 'off')
+            assert.equal(spec.env[LiveLoopServices.DesktopTenantPlaneUrlVar], ServicesFx.InheritedTenantPlaneUrl, 'an inherited value is kept')
         })
     })
 
@@ -432,8 +493,13 @@ describe('LiveLoopStack descriptor files', () =>
         kubeContext: 'kind-pragmatic-e2e', ownerEmail: 'o@t.io', ownerPasswordFile: join(dir, 'owner-password'),
         operatorEmail: 'op@t.io', operatorPasswordFile: join(dir, 'operator-password'),
         idpCaFile: join(dir, 'data', 'idp', 'e2e', 'tls', 'ca.crt'), idpCertFile: join(dir, 'data', 'idp', 'e2e', 'tls', 'server.crt'),
-        idpLogin: 'browser', dataRoot: join(dir, 'data'),
+        idpLogin: 'browser', dataRoot: join(dir, 'data'), signIn: LiveLoopSignIn.Transitional,
     })
+    const files = (dir: string): LiveLoopStackFiles => ({
+        dataRoot: join(dir, 'data'), ownerPasswordFile: join(dir, 'owner-password'), operatorPasswordFile: join(dir, 'operator-password'),
+        idpCaFile: join(dir, 'data', 'idp', 'e2e', 'tls', 'ca.crt'), idpCertFile: join(dir, 'data', 'idp', 'e2e', 'tls', 'server.crt'),
+    })
+    const realmIssuer = 'https://host.docker.internal:7300/realms/e2e'
 
     it('writes every file path relative to the stack folder with forward slashes, so Windows and WSL readers both resolve it', () =>
     {
@@ -460,6 +526,26 @@ describe('LiveLoopStack descriptor files', () =>
         {
             rmSync(dir, { recursive: true, force: true })
         }
+    })
+
+    it('a realm descriptor names the realm issuer and keeps its CA bundle path portable too', () =>
+    {
+        const dir = join(tmpdir(), 'stack')
+        const realm: LiveLoopStackDescriptor = { ...absolute(dir), signIn: LiveLoopSignIn.Realm, realmIssuer, desktopCaFile: join(dir, 'desktop-ca.pem') }
+        const portable = LiveLoopStack.Portable(realm, dir)
+        assert.equal(portable.desktopCaFile, 'desktop-ca.pem')
+        assert.equal(portable.realmIssuer, realmIssuer)
+        assert.equal(portable.signIn, LiveLoopSignIn.Realm)
+        assert.equal(LiveLoopStack.Portable(absolute(dir), dir).desktopCaFile, undefined, 'a transitional descriptor has none')
+    })
+
+    it('up\'s descriptor carries the sign-in mode, and the realm only in realm mode', () =>
+    {
+        const dir = join(tmpdir(), 'stack')
+        const realm = { realmIssuer, desktopCaFile: join(dir, 'desktop-ca.pem') }
+        const transitional = LiveLoopStack.Descriptor(files(dir), LiveLoopSignIn.Transitional, realm)
+        assert.deepEqual(transitional, { ...absolute(dir), tenantPlaneOrigin: LiveLoopStackNames.TenantPlaneOrigin }, 'a transitional stack names no realm even when given one')
+        assert.deepEqual(LiveLoopStack.Descriptor(files(dir), LiveLoopSignIn.Realm, realm), { ...transitional, signIn: LiveLoopSignIn.Realm, ...realm })
     })
 
     it('still reads an older descriptor whose paths are absolute', () =>

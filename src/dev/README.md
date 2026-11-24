@@ -115,7 +115,17 @@ anything that is not a name-constrained CA. After the CA file is gone, remove it
 ## Local platform IdP certificates
 
 A tenant's local IdP container serves TLS signed by its own CA, `<data folder>/idp/<tenant>/tls/ca.crt`, name-constrained to
-`host.docker.internal` and `127.0.0.1`. Trust or remove it with the same `dev-ca-trust.ps1` commands as above.
+the DNS names `host.docker.internal` and `localhost`, with every IP address excluded (pragmatic-shared 0.18.14 and later; the
+server certificate names no IP, loopback clients use `localhost`). Trust or remove it with the same `dev-ca-trust.ps1`
+commands as above.
+
+A CA minted before pragmatic-shared 0.18.14 permits `127.0.0.1` as an IP subtree, and its server certificate names that IP:
+Plexus (Electron, BoringSSL) refuses such a chain ("unsupported name constraint type"), so its realm sign-in fails. From
+platform admin 0.1.8 on, the control plane re-mints a local IdP's `tls/` itself when its certificate names no `localhost`
+(the old set is kept as `tls.pre-0.18.14/`); environments created before then still trust the old CA, so recreate them. Until
+then, and for an in-hive IdP, the control plane's own clients verify an old certificate by its IP. An in-hive IdP's CA is kept
+across console installs (every environment of the hive trusts it), so an old one stays until it is rotated; Plexus reaches an
+in-hive IdP through the hive's Ingress certificate when the hive has one.
 
 An IdP whose CA predates the name constraint is refused by `-Install`. To replace that CA, stop the control plane,
 delete the whole `<data folder>/idp/<tenant>/tls/` directory (only a missing directory is re-minted; a partly missing set of

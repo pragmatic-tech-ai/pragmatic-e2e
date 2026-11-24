@@ -12,6 +12,7 @@ import { InMemoryEnvironmentProvisioning } from '../../../../repos/pragmatic-env
 import type { EnvironmentProvisioning } from '../../../../repos/pragmatic-env-server/server/src/environments/environment-provisioning.js'
 import { SiblingCheckouts } from '../../../stack/sibling-checkouts.js'
 import { ClusterFixtures } from './cluster-fixtures.js'
+import { E2ePlatform } from '../e2e-platform.js'
 
 class CountingRouter implements IWorkerRouter
 {
@@ -102,7 +103,7 @@ test('the worker host rejects a per-environment upgrade breach with 429 + Retry-
     cpSync(SiblingCheckouts.PathOf(ClusterFixtures.EnvServer, ClusterFixtures.Server, ClusterFixtures.Src, ClusterFixtures.Tests, ClusterFixtures.Fixtures, ClusterFixtures.SampleSolution), join(baseDir, 't1', 'solution'), { recursive: true })
     process.env[Fixtures.KeyEnv] = randomBytes(32).toString('base64')
     const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 't1' }]])
-    const worker = await WorkerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: Fixtures.KeyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries), tls: Fixtures.ServerTls(), rateLimit: Fixtures.Guard() })
+    const worker = await WorkerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: Fixtures.KeyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries), tls: Fixtures.ServerTls(), platform: E2ePlatform.Mem(), rateLimit: Fixtures.Guard() })
     const client = MachineTls.Client(Fixtures.ClientTls())
     const dial = (): WebSocket => new WebSocket(`wss://${worker.Address().host}:${worker.Address().port}/`, { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, headers: { 'x-pragmatic-environment': 't1' } })
     try

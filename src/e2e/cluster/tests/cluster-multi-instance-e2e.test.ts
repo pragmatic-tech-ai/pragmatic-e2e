@@ -14,6 +14,7 @@ import type { EnvironmentProvisioning } from '../../../../repos/pragmatic-env-se
 import type { MachineTlsRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { SiblingCheckouts } from '../../../stack/sibling-checkouts.js'
 import { ClusterFixtures } from './cluster-fixtures.js'
+import { E2ePlatform } from '../e2e-platform.js'
 
 class Fixture
 {
@@ -57,7 +58,7 @@ class Fixture
 
     public static async Worker(baseDir: string, port: number, url: string, environment: string): Promise<WorkerHost>
     {
-        return WorkerHost.StartAsync({ host: Fixture.Host, port, baseDir, masterKey: { base64Env: Fixture.KeyEnv }, provisioning: Fixture.Provisioning(environment), tls: Fixture.ServerTls(), redisUrl: url, advertise: { host: Fixture.Host, port } })
+        return WorkerHost.StartAsync({ host: Fixture.Host, port, baseDir, masterKey: { base64Env: Fixture.KeyEnv }, provisioning: Fixture.Provisioning(environment), tls: Fixture.ServerTls(), platform: E2ePlatform.Mem(), redisUrl: url, advertise: { host: Fixture.Host, port } })
     }
 
     public static async Token(worker: WorkerHost, environment: string): Promise<string>

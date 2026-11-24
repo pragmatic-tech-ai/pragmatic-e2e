@@ -16,6 +16,7 @@ import { type IWorkerRouter, type WorkerEndpoint, type MachineTlsRef, DrainContr
 import { StructuredLogger } from '@pragmatic-tech-ai/pragmatic-observability'
 import { SiblingCheckouts } from '../../../stack/sibling-checkouts.js'
 import { ClusterFixtures } from './cluster-fixtures.js'
+import { E2ePlatform } from '../e2e-platform.js'
 
 class StubRouter implements IWorkerRouter
 {
@@ -113,7 +114,7 @@ class BackingWorker
         cpSync(join(GwFixture.Tls().certFile, '..', '..', ClusterFixtures.SampleSolution), join(baseDir, 't1', 'solution'), { recursive: true })
         process.env[GwFixture.KeyEnv] = randomBytes(32).toString('base64')
         const provisioning = new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'T1' }]]))
-        const worker = await WorkerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: GwFixture.KeyEnv }, provisioning, tls: GwFixture.Tls() })
+        const worker = await WorkerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: GwFixture.KeyEnv }, provisioning, tls: GwFixture.Tls(), platform: E2ePlatform.Mem() })
         return new BackingWorker(baseDir, worker)
     }
 

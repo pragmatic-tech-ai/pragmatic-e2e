@@ -115,7 +115,7 @@ class ProvFixture
                 new HiveRegistry(path.join(dir, ProvFixture.HivesFile)),
                 { List: () => [] });
             await directory.Load();
-            await directory.CreateClient({ id: ProvFixture.ClientId, displayName: ProvFixture.ClientName });
+            await directory.RecordClient({ id: ProvFixture.ClientId, displayName: ProvFixture.ClientName });
             await body(conn, realms, directory);
         }
         finally

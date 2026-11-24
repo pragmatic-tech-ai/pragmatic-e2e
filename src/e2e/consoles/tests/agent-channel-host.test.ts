@@ -8,7 +8,8 @@ import { PlaneHttp, AgentChannelHost, InternalApiClient, type DiscoveryReply, ty
 import { LocalAgentChannelBackend } from '../../../../repos/pragmatic-platform-admin/src/local-agent-channel-backend.js'
 import { RemoteAgentChannelBackend } from '../../../../repos/pragmatic-platform-edge/src/remote-agent-channel-backend.js'
 import { InternalApiCredential } from '@pragmatic-tech-ai/pragmatic-app-host'
-import { InternalApiHost } from '../../../../repos/pragmatic-platform-admin/src/internal-api-host.js'
+import { InternalHost } from '../../../../repos/pragmatic-platform-admin/src/internal/internal-host.js'
+import { InternalSettings } from '../../../../repos/pragmatic-platform-admin/src/internal/internal-settings.js'
 import { ClientRegistry } from '../../../../repos/pragmatic-platform-admin/src/client-registry.js'
 import { TenantRegistry } from '../../../../repos/pragmatic-platform-admin/src/tenant-registry.js'
 import { HiveRegistry } from '../../../../repos/pragmatic-platform-admin/src/hive-registry.js'
@@ -76,10 +77,10 @@ class InProcessBackends implements ChannelBackends
     }
 }
 
-/** Puts a real InternalApiHost in front of the in-process backend and points a RemoteAgentChannelBackend at it. */
+/** Puts a real InternalHost (the console's internal listener) in front of the in-process backend and points a RemoteAgentChannelBackend at it. */
 class RemoteBackends implements ChannelBackends
 {
-    private readonly internals: InternalApiHost[] = []
+    private readonly internals: InternalHost[] = []
     private readonly secretDir = mkdtempSync(join(tmpdir(), 'channel-contract-'))
 
     public async Host(local: LocalAgentChannelBackend): Promise<AgentChannelHost>
@@ -87,8 +88,8 @@ class RemoteBackends implements ChannelBackends
         const secret = join(this.secretDir, 'secret')
         writeFileSync(secret, 'c'.repeat(48))
         const credential = InternalApiCredential.FromFile(secret)
-        const internal = new InternalApiHost(credential, local, new UnusedDiscovery())
-        await internal.Listen(0, '127.0.0.1')
+        const internal = new InternalHost(new InternalSettings(0, '127.0.0.1', secret), { Agent: local, Discovery: new UnusedDiscovery() })
+        await internal.Listen()
         this.internals.push(internal)
         const client = new InternalApiClient('http://127.0.0.1:' + String(internal.Address().port), credential)
         return new AgentChannelHost(new RemoteAgentChannelBackend(client, local.ServesConsole()))
@@ -188,7 +189,7 @@ class ChannelSuite
                     new HiveRegistry(join(parent, 'hives.json')),
                     { List: () => [] })
                 await directory.Load()
-                await directory.CreateClient({ id: 'acme', displayName: 'Acme' })
+                await directory.RecordClient({ id: 'acme', displayName: 'Acme' })
                 await directory.CreateTenant({ id: 't1', clientId: 'acme', displayName: 'T' })
                 await directory.CreateHive({ id: Harness.HiveId, tenantId: 't1', displayName: 'L', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
                 deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())

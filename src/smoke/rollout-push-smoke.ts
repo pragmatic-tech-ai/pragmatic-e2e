@@ -140,7 +140,7 @@ export class RolloutPushSmoke
                 new HiveRegistry(this.TempFile(S.HivesFileName)),
                 environments)
             await directory.Load()
-            await directory.CreateClient({ id: S.ClientId, displayName: S.DisplayName })
+            await directory.RecordClient({ id: S.ClientId, displayName: S.DisplayName })
             await directory.CreateTenant({ id: S.TenantId, clientId: S.ClientId, displayName: S.DisplayName })
             const hive = await directory.CreateHive({
                 id: S.HiveId,

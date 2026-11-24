@@ -284,7 +284,7 @@ export class TenantLoginE2eSmoke
         await this.SignBoth()
 
         // Provision the tenant: launches its IdP container and returns the one-time owner password (never printed).
-        await plane.directory.CreateClient({ id: S.ClientId, displayName: S.DisplayName })
+        await plane.directory.RecordClient({ id: S.ClientId, displayName: S.DisplayName })
         const provisioning = new TenantProvisioningService(plane.idpService, plane.directory, conn => new IdpAdminClient(conn))
         const provisioned = await provisioning.Provision({ id: S.TenantId, clientId: S.ClientId, displayName: S.DisplayName, ownerEmail: S.OwnerEmail })
         const ownerPassword = provisioned.ownerPassword

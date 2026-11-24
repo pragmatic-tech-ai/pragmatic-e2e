@@ -18,11 +18,14 @@
  *     with its agent installed (as the operator's install button does) and checked in;
  *   - one owner sign-in through the tenant plane, as the owner would; the one-time password stays the owner's.
  *
- * `up` writes stack.json in the stack folder (~/.pragmatic/e2e-stack, or PRAGMATIC_E2E_STACK_DIR) with addresses, emails
+ * `up --sign-in realm` (the default) turns the console's desktop realm sign-in on (E spec S4-S6): `/desktop/console`, reached
+ * through the TLS front (the tenant plane URL discovery names), names the tenant realm, so Plexus signs in at the realm as
+ * the public client `plexus`; `up --sign-in transitional` turns it off and keeps the console-brokered sign-in on the
+ * loopback tenant listener. `up` writes stack.json in the stack folder (~/.pragmatic/e2e-stack, or PRAGMATIC_E2E_STACK_DIR) with addresses, emails
  * and password FILE paths relative to that folder, for the live-loop orchestrator and the Plexus spec; `down` stops the control plane, removes the IdP container and volume, deletes the kind
  * cluster and the stack folder. Passwords are written to files in the stack folder only: never printed or logged.
  *
- *   npx tsx src/live-loop/live-loop-stack.ts up|down
+ *   npx tsx src/live-loop/live-loop-stack.ts up [--sign-in realm|transitional] | down
  *
  * The services run from the sibling checkouts under PRAGMATIC_E2E_REPOS_DIR (default: the folder this repository sits in),
  * each with its own `npm ci` done: pragmatic-platform-admin, pragmatic-platform-edge and pragmatic-tenant-admin (for its
@@ -52,6 +55,19 @@ import { TenantPlaneTlsFront } from './tenant-plane-tls-front.js'
 import { ProcessTree } from './process-tree.js'
 import { type IOperatorApi, OperatorApiClient } from './operator-api-client.js'
 import { TenantOwnerSession } from './tenant-owner-session.js'
+import { type LiveLoopRealmSignIn, LiveLoopRealmSignInStep } from './live-loop-realm-sign-in.js'
+import { LiveLoopSignIn, LiveLoopStackArgs } from './live-loop-stack-args.js'
+import { type IEntitlementsLink, LiveLoopEntitlements } from './live-loop-entitlements.js'
+import { EntitlementsLink } from '@pragmatic-tech-ai/pragmatic-entitlements-contract'
+
+/** The files `up` writes or the stack's services keep, as LiveLoopStack.Descriptor names them. */
+export type LiveLoopStackFiles = {
+    readonly dataRoot: string
+    readonly ownerPasswordFile: string
+    readonly operatorPasswordFile: string
+    readonly idpCaFile: string
+    readonly idpCertFile: string
+}
 
 /**
  * What `up` hands the orchestrator and the Plexus spec; secrets are FILE paths, never values. On disk every file path is
@@ -74,6 +90,12 @@ export type LiveLoopStackDescriptor = {
     /** How the e2e signs in at the IdP: its login is a JavaScript page, so a (headless) browser. */
     idpLogin: string
     dataRoot: string
+    /** How Plexus signs in. */
+    signIn: LiveLoopSignIn
+    /** realm: the tenant realm's issuer the console names (Plexus's authorize URL is on it). */
+    realmIssuer?: string
+    /** realm: a PEM bundle of the TLS front's CA and the IdP's CA (Plexus's main process trusts both: NODE_EXTRA_CA_CERTS). */
+    desktopCaFile?: string
 }
 
 /** The fixed names and test credentials of the stack (short fake emails; passwords meet the 12-character policy). */
@@ -118,11 +140,14 @@ export class LiveLoopStackNames
     }
 }
 
-/** The operator's seed, as dev-seed.sh does it: client, tenant (its IdP comes up here) and the attached hive. Returns the owner's one-time password. */
+/**
+ * The stack's seed: the clients ledger's statement for the e2e client (clients are the ledger's; its limits admit one
+ * tenant and one hive), then the operator's tenant (its IdP comes up here) and the attached hive. Returns the owner's
+ * one-time password.
+ */
 export class LiveLoopStackSeed
 {
     private static readonly MethodPost = 'POST'
-    private static readonly ClientsPath = '/api/clients'
     private static readonly TenantsPath = '/api/tenants'
     private static readonly HivesPath = '/api/hives'
     private static readonly StatusCreated = 201
@@ -136,7 +161,7 @@ export class LiveLoopStackSeed
     private static readonly FailedPrefix = 'seed step failed: '
     private static readonly StatusWord = ' status '
 
-    public constructor(private readonly api: IOperatorApi)
+    public constructor(private readonly api: IOperatorApi, private readonly entitlements: IEntitlementsLink, private readonly now: () => Date = () => new Date())
     {
     }
 
@@ -144,7 +169,11 @@ export class LiveLoopStackSeed
     {
         const S = LiveLoopStackSeed
         const N = LiveLoopStackNames
-        await this.Expect(S.ClientsPath, { id: N.ClientId, displayName: S.ClientName })
+        const delivered = await this.entitlements.PostStatement(LiveLoopEntitlements.Statement(N.ClientId, S.ClientName, this.now()))
+        if (delivered !== LiveLoopEntitlements.StatusOk)
+        {
+            throw new Error(S.FailedPrefix + EntitlementsLink.StatementsPath + S.StatusWord + String(delivered))
+        }
         const tenant = await this.Expect(S.TenantsPath, { id: N.TenantId, clientId: N.ClientId, displayName: S.TenantName, ownerEmail: N.OwnerEmail })
         const owner = tenant[S.OwnerKey] as Record<string, unknown> | undefined
         const password = owner?.[S.PasswordKey]
@@ -341,6 +370,11 @@ export class LiveLoopServices
     private static readonly FalseValue = 'false'
     private static readonly HttpsScheme = 'https'
     private static readonly TrueValue = 'true'
+    private static readonly OnValue = 'on'
+    /** pragmatic-tenant-plane TenantAdminEnv.DesktopRealmSignIn (this repository's tenant-plane range predates it). */
+    public static readonly DesktopRealmSignInVar = 'PRAGMATIC_TENANT_ADMIN_DESKTOP_REALM_SIGN_IN'
+    public static readonly DesktopTenantPlaneUrlVar = 'PRAGMATIC_DESKTOP_TENANT_PLANE_URL'
+    private static readonly OffValue = 'off'
     public static readonly TlsFrontScript = join('src', 'live-loop', 'tenant-plane-tls-front.ts')
 
     public constructor(private readonly roots: RepositoryRoots)
@@ -355,7 +389,7 @@ export class LiveLoopServices
     }
 
     /** The console: operator :7000, tenant plane :7100 (serving pragmatic-tenant-admin's portal), internal API :7002. */
-    public Console(base: NodeJS.ProcessEnv, dataRoot: string, databaseUrlFile: string, internalSecretFile: string, operatorPasswordFile: string): LiveLoopServiceSpec
+    public Console(base: NodeJS.ProcessEnv, dataRoot: string, databaseUrlFile: string, internalSecretFile: string, operatorPasswordFile: string, entitlementsSecretFile: string, signIn: LiveLoopSignIn = LiveLoopSignIn.Realm): LiveLoopServiceSpec
     {
         const S = LiveLoopServices
         const N = LiveLoopStackNames
@@ -377,6 +411,8 @@ export class LiveLoopServices
                 PRAGMATIC_ADMIN_INTERNAL_PORT: String(N.InternalApiPort),
                 PRAGMATIC_ADMIN_INTERNAL_BIND: S.LoopbackBind,
                 PRAGMATIC_INTERNAL_API_SECRET_FILE: internalSecretFile,
+                // The clients ledger's link: the seed delivers the e2e client's entitlement statement over it.
+                PRAGMATIC_ADMIN_ENTITLEMENTS_SECRET_FILE: entitlementsSecretFile,
                 PRAGMATIC_TENANT_ADMIN_PORT: String(N.TenantPlanePort),
                 PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: N.TenantBaseDomain,
                 // Browsers reach the tenant plane through the TLS front: the realm sign-in service accepts only https redirects.
@@ -389,8 +425,22 @@ export class LiveLoopServices
                 PRAGMATIC_TENANT_PORTAL_DIR: join(this.roots.Of(S.TenantAdmin), S.TenantPortalDir, S.DistDir),
                 // The console does not listen on the agent channel (the edge does); it still names it in hive bundles.
                 PRAGMATIC_AGENT_CHANNEL_PORT: String(N.AgentChannelPort),
+                ...LiveLoopServices.SignInEnv(signIn),
             },
         }
+    }
+
+    /**
+     * The console's desktop sign-in settings per mode. realm: realm sign-in on, and discovery names the tenant plane on the
+     * TLS front (its host names the tenant, which the co-hosted plane's /desktop/console needs); transitional: off, and the
+     * desktop tenant plane address is left as given (unset: the console derives its loopback tenant listener).
+     */
+    public static SignInEnv(signIn: LiveLoopSignIn): NodeJS.ProcessEnv
+    {
+        const S = LiveLoopServices
+        return signIn === LiveLoopSignIn.Realm
+            ? { [S.DesktopRealmSignInVar]: S.OnValue, [S.DesktopTenantPlaneUrlVar]: LiveLoopStackNames.TenantPlaneOrigin }
+            : { [S.DesktopRealmSignInVar]: S.OffValue }
     }
 
     /** The edge: the agent channel on :7001 (all addresses, so the kind pods reach it), answered through the internal API. */
@@ -435,9 +485,9 @@ export class LiveLoopServices
 
 export class LiveLoopStack
 {
-    private static readonly UpVerb = 'up'
+    private static readonly UpVerb = LiveLoopStackArgs.UpVerb
     private static readonly DownVerb = 'down'
-    private static readonly UsageMessage = 'usage: live-loop-stack.ts up|down'
+    private static readonly UsageMessage = LiveLoopStackArgs.Usage
     private static readonly HttpsPort = 443
     private static readonly PostgresImage = 'postgres:16'
     private static readonly Docker = 'docker'
@@ -511,6 +561,7 @@ export class LiveLoopStack
     private static readonly TlsFrontExitedMessage = 'the tenant plane TLS front exited during start; see tls-front.log in the stack folder, then run down'
     private static readonly TlsFrontNotReadyMessage = 'the tenant plane TLS front did not listen in time; see tls-front.log in the stack folder, then run down'
     private static readonly InternalSecretFileName = 'internal-api-secret'
+    private static readonly EntitlementsSecretFileName = 'entitlements-link-secret'
     private static readonly OwnerPasswordFileName = 'owner-password'
     private static readonly OperatorPasswordFileName = 'operator-password'
     private static readonly IdpTlsRelative = ['idp', LiveLoopStackNames.TenantId, 'tls']
@@ -523,8 +574,9 @@ export class LiveLoopStack
     private static readonly PollMs = 2_000
     private static readonly Utf8 = 'utf8'
     private static readonly PortableSeparator = '/'
-    /** The descriptor's keys that hold file or folder paths. */
+    /** The descriptor's keys that hold file or folder paths (the optional ones only when present). */
     private static readonly FileKeys = ['ownerPasswordFile', 'operatorPasswordFile', 'idpCaFile', 'idpCertFile', 'dataRoot'] as const
+    private static readonly OptionalFileKeys = ['desktopCaFile'] as const
     private static readonly GetVerb = 'get'
     private static readonly OutputFlag = '-o'
     private static readonly ArgsJsonPath = 'jsonpath={.spec.template.spec.containers[0].args}'
@@ -548,9 +600,10 @@ export class LiveLoopStack
         ControlPlane: '[stack] platform admin console on :7000 / :7100, internal API :7002 (records in its Postgres, files in the stack folder)',
         Edge: '[stack] platform edge: agent channel :7001, answered through the internal API of the console',
         TlsFront: '[stack] tenant plane TLS front: https://e2e.lvh.me:7443 relayed to :7100 (development certificate in the stack folder)',
-        Seed: '[stack] operator seed: client, tenant e2e (IdP), hive e2e-hive',
+        Seed: '[stack] seed: the client e2e-client from its ledger statement, then the operator creates tenant e2e (IdP) and hive e2e-hive',
         Agent: '[stack] hive agent install; the hive checks in over the agent channel on :7001',
         Owner: '[stack] owner sign-in and short test password',
+        RealmSignIn: '[stack] realm sign-in: the console names its tenant realm in /desktop/console (Plexus signs in there as plexus)',
         Done: '[stack] up; descriptor written to ',
         Down: '[stack] down',
     }
@@ -586,15 +639,15 @@ export class LiveLoopStack
 
     public static async Main(): Promise<void>
     {
-        const verb = process.argv[2]
+        const args = LiveLoopStackArgs.Parse(process.argv.slice(2))
         const stack = new LiveLoopStack()
         try
         {
-            if (verb === LiveLoopStack.UpVerb)
+            if (args.Verb === LiveLoopStack.UpVerb)
             {
-                await stack.Up()
+                await stack.Up(args.SignIn)
             }
-            else if (verb === LiveLoopStack.DownVerb)
+            else if (args.Verb === LiveLoopStack.DownVerb)
             {
                 await stack.Down()
             }
@@ -650,10 +703,18 @@ export class LiveLoopStack
         {
             out[key] = map(descriptor[key])
         }
+        for (const key of LiveLoopStack.OptionalFileKeys)
+        {
+            const file = descriptor[key]
+            if (file !== undefined)
+            {
+                out[key] = map(file)
+            }
+        }
         return out
     }
 
-    public async Up(): Promise<void>
+    public async Up(signIn: LiveLoopSignIn = LiveLoopSignIn.Realm): Promise<void>
     {
         const L = LiveLoopStack
         const N = LiveLoopStackNames
@@ -707,8 +768,9 @@ export class LiveLoopStack
         await this.RequireFreePorts()
         console.log(L.Steps.Postgres)
         const databaseUrlFile = await this.StartConsolePostgres()
-        const internalSecretFile = this.WriteInternalSecret()
-        await this.WaitForPing(this.StartService(this.services.Console(process.env, dataRoot, databaseUrlFile, internalSecretFile, operatorPasswordFile), L.LogFileName, L.PidFileName))
+        const internalSecretFile = this.WriteSecret(L.InternalSecretFileName)
+        const entitlementsSecretFile = this.WriteSecret(L.EntitlementsSecretFileName)
+        await this.WaitForPing(this.StartService(this.services.Console(process.env, dataRoot, databaseUrlFile, internalSecretFile, operatorPasswordFile, entitlementsSecretFile, signIn), L.LogFileName, L.PidFileName))
         console.log(L.Steps.Edge)
         await this.WaitForEdge(this.StartService(this.services.Edge(process.env, internalSecretFile), L.EdgeLogFileName, L.EdgePidFileName))
         console.log(L.Steps.TlsFront)
@@ -719,7 +781,8 @@ export class LiveLoopStack
         console.log(L.Steps.Seed)
         const api = new OperatorApiClient(N.OperatorBase)
         await api.Login(N.OperatorEmail, operatorPassword)
-        const oneTime = await new LiveLoopStackSeed(api).Seed()
+        const entitlements = LiveLoopEntitlements.FromSecretFile(N.InternalApiBase, entitlementsSecretFile)
+        const oneTime = await new LiveLoopStackSeed(api, entitlements).Seed()
         this.HoldSecret(oneTime)
 
         console.log(L.Steps.Agent)
@@ -733,23 +796,40 @@ export class LiveLoopStack
         const ownerPasswordFile = join(N.StackDir, L.OwnerPasswordFileName)
         writeFileSync(ownerPasswordFile, oneTime, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
 
-        const descriptor: LiveLoopStackDescriptor = {
+        const idpCaFile = join(dataRoot, ...L.IdpTlsRelative, L.IdpCaFileName)
+        const idpCertFile = join(dataRoot, ...L.IdpTlsRelative, L.IdpCertFileName)
+        let realm: LiveLoopRealmSignIn | undefined
+        if (signIn === LiveLoopSignIn.Realm)
+        {
+            console.log(L.Steps.RealmSignIn)
+            realm = await LiveLoopRealmSignInStep.Resolve({ Origin: N.TenantPlaneOrigin, FrontCaFile: front.caFile, FrontCertFile: front.certFile, IdpCaFile: idpCaFile, IdpCertFile: idpCertFile, StackDir: N.StackDir })
+        }
+        const descriptor = L.Descriptor({ dataRoot, ownerPasswordFile, operatorPasswordFile, idpCaFile, idpCertFile }, signIn, realm)
+        writeFileSync(L.DescriptorPath(), JSON.stringify(L.Portable(descriptor, N.StackDir), null, 2), L.Utf8)
+        console.log(L.Steps.Done + L.DescriptorPath())
+    }
+
+    /** Pure: the descriptor `up` writes: the stack's fixed names, its files, the sign-in mode and, in realm mode, the realm. */
+    public static Descriptor(files: LiveLoopStackFiles, signIn: LiveLoopSignIn, realm: LiveLoopRealmSignIn | undefined): LiveLoopStackDescriptor
+    {
+        const N = LiveLoopStackNames
+        return {
             platformAddress: N.PlatformAddress,
             tenantPlaneOrigin: N.TenantPlaneOrigin,
             tenant: N.TenantId,
             hive: N.HiveId,
             kubeContext: N.KubeContext,
             ownerEmail: N.OwnerEmail,
-            ownerPasswordFile,
+            ownerPasswordFile: files.ownerPasswordFile,
             operatorEmail: N.OperatorEmail,
-            operatorPasswordFile,
-            idpCaFile: join(dataRoot, ...L.IdpTlsRelative, L.IdpCaFileName),
-            idpCertFile: join(dataRoot, ...L.IdpTlsRelative, L.IdpCertFileName),
-            idpLogin: L.BrowserLogin,
-            dataRoot,
+            operatorPasswordFile: files.operatorPasswordFile,
+            idpCaFile: files.idpCaFile,
+            idpCertFile: files.idpCertFile,
+            idpLogin: LiveLoopStack.BrowserLogin,
+            dataRoot: files.dataRoot,
+            signIn,
+            ...(signIn === LiveLoopSignIn.Realm && realm !== undefined ? { realmIssuer: realm.realmIssuer, desktopCaFile: realm.desktopCaFile } : {}),
         }
-        writeFileSync(L.DescriptorPath(), JSON.stringify(L.Portable(descriptor, N.StackDir), null, 2), L.Utf8)
-        console.log(L.Steps.Done + L.DescriptorPath())
     }
 
     /**
@@ -839,13 +919,14 @@ export class LiveLoopStack
         return urlFile
     }
 
-    /** The internal API's shared secret (32 random bytes, hex), in an owner-only file of the stack folder; never logged. */
-    private WriteInternalSecret(): string
+    /** A link's shared secret (32 random bytes, hex: the internal API's, the entitlements link's), in an owner-only file of
+     *  the stack folder; never logged. */
+    private WriteSecret(fileName: string): string
     {
         const L = LiveLoopStack
         const secret = randomBytes(L.InternalSecretBytes).toString(L.HexEncoding)
         this.HoldSecret(secret)
-        const file = join(LiveLoopStackNames.StackDir, L.InternalSecretFileName)
+        const file = join(LiveLoopStackNames.StackDir, fileName)
         writeFileSync(file, secret, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
         return file
     }

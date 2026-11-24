@@ -112,7 +112,7 @@ describe('HttpRolloutClient against a real AgentChannelHost', () =>
             new HiveRegistry(join(parent, Names.HivesFile)),
             { List: () => [] })
         await directory.Load()
-        await directory.CreateClient({ id: Names.Acme, displayName: Names.AcmeName })
+        await directory.RecordClient({ id: Names.Acme, displayName: Names.AcmeName })
         await directory.CreateTenant({ id: Names.Tenant, clientId: Names.Acme, displayName: Names.TenantName })
         await directory.CreateHive({ id: Names.HiveId, tenantId: Names.Tenant, displayName: Names.HiveName, cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
         deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())

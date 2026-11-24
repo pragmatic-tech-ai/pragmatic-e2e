@@ -18,6 +18,7 @@ import { PlatformDirectory } from '../../../../repos/pragmatic-platform-admin/sr
 import { TenantRegistry } from '../../../../repos/pragmatic-platform-admin/src/tenant-registry.js'
 import { DockerEnv } from '../../../../repos/pragmatic-platform-admin/src/environments/seed/docker.js'
 import { ServerBootstrap } from '../../../../repos/pragmatic-env-server/server/src/bin/server-bootstrap.js'
+import { EnvServerStartImport } from '../../../../repos/pragmatic-env-server/server/src/bin/env-server-start-import.js'
 import { ProvisionedSecretsFactory } from '../../../../repos/pragmatic-env-server/server/src/config/provisioned-secrets-factory.js'
 import { ServerConfigLoader, HostBootstrap } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { EnvironmentProvisioningFactory } from '../../../../repos/pragmatic-env-server/server/src/config/environment-provisioning-factory.js'
@@ -29,6 +30,7 @@ import { AdminService } from '../../../../repos/pragmatic-env-server/server/src/
 import { CallerCredentialAdapterFactory, ConnectionCredentialMode } from '../../../../repos/pragmatic-env-server/server/src/host/connectors/caller-credential-adapter-factory.js'
 import { ServerConnectionHandler } from '../../../../repos/pragmatic-env-server/server/src/host/server-connection-handler.js'
 import { EnvironmentFixture, type FixturePackageRef, type SeedRow } from '../../../../repos/pragmatic-env-server/server/src/host/environment/tests/environment-fixture.js'
+import { E2ePlatform } from '../../cluster/e2e-platform.js'
 
 /** One package of a capstone environment: its ref and TODL source. */
 type CapstonePackage = readonly [FixturePackageRef, string]
@@ -579,7 +581,10 @@ class InProcessDocker implements IDockerEnv
         }, read)
         const logger = new ServerNullLogger()
         const audit = HostBootstrap.AuditSink(config, logger)
-        const options = ServerBootstrap.ComposeOptions(config, EnvironmentProvisioningFactory.Build(config, read).provisioning, undefined, ProvisionedSecretsFactory.Build(config, read), logger,
+        // As the env server's main does: the platform bundle (its database, A5), then the import of the bundle's files.
+        const platform = E2ePlatform.Mem()
+        await EnvServerStartImport.Run(config, platform, logger)
+        const options = ServerBootstrap.ComposeOptions(config, EnvironmentProvisioningFactory.Build(config, read).provisioning, platform, ProvisionedSecretsFactory.Build(config, read), logger,
             undefined, audit, HostBootstrap.RateLimit(config, audit, undefined, logger))
         this.host = await PragmaticServerHost.StartAsync(options)
     }

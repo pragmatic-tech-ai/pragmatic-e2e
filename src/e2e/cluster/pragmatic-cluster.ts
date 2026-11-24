@@ -3,6 +3,7 @@ import type { IEnvironmentProvisioning } from '../../../repos/pragmatic-env-serv
 import { WorkerHost } from '../../../repos/pragmatic-env-server/server/src/cluster/worker-host.js'
 import { Gateway } from '../../../repos/pragmatic-env-gateway/src/cluster/gateway.js'
 import type { PlatformServices } from '../../../repos/pragmatic-env-server/server/src/platform/platform-services.js'
+import { E2ePlatform } from './e2e-platform.js'
 
 export interface ClusterOptions
 {
@@ -37,7 +38,7 @@ export class PragmaticCluster
     public static async StartAsync(options: ClusterOptions): Promise<PragmaticCluster>
     {
         const host = options.host ?? PragmaticCluster.DefaultHost
-        const worker = await WorkerHost.StartAsync({ host, port: 0, baseDir: options.baseDir, masterKey: options.masterKey, provisioning: options.provisioning, tls: options.tls, platform: options.platform, deploymentMode: options.deploymentMode, adapterPacks: options.adapterPacks })
+        const worker = await WorkerHost.StartAsync({ host, port: 0, baseDir: options.baseDir, masterKey: options.masterKey, provisioning: options.provisioning, tls: options.tls, platform: options.platform ?? E2ePlatform.Mem(), deploymentMode: options.deploymentMode, adapterPacks: options.adapterPacks })
         const router = new InMemoryWorkerRouter(worker.Address())
         const gateway = await Gateway.StartAsync({ host: options.host, port: options.port, router, tls: options.tls })
         return new PragmaticCluster(gateway, worker, router)

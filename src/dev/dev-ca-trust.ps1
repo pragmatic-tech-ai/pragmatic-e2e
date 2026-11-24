@@ -10,7 +10,10 @@
 # Exactly one of -Install, -Remove, -ShowThumbprint is required (otherwise exit status 2). -Thumbprint is an
 # alternative to -CaFile for -Remove only, for when the CA file is gone. -Install refuses any certificate that
 # is not a name-constrained CA (every development CA minted now is; a local IdP CA minted before the constraint
-# existed is refused until it is replaced, see README.md). -WhatIf reports what would happen and changes nothing.
+# existed is refused until it is replaced, see README.md). A name-constrained CA vouches only for the names it permits:
+# a local IdP CA minted on pragmatic-shared 0.18.14 or later permits its DNS hosts and localhost and excludes every IP
+# address; an older one also permitted 127.0.0.1 (Plexus cannot verify that one, replace it as README.md says).
+# -WhatIf reports what would happen and changes nothing.
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [string]$CaFile,
