@@ -1,4 +1,5 @@
 import { CabinetPage } from '../drivers/cabinet-page.js'
+import { CabinetTenantsPage } from '../drivers/cabinet-tenants-page.js'
 import { CentralLoginPage } from '../drivers/central-login-page.js'
 import { CustomerSession } from '../drivers/customer-session.js'
 import type { IJourneyBrowser } from '../drivers/journey-browser.js'
@@ -16,6 +17,7 @@ import { JourneyLegName } from './journey-keys.js'
 import { PayLeg } from './pay-leg.js'
 import { PendingLeg } from './pending-leg.js'
 import { RegisterLeg, type IUncleanedRuns } from './register-leg.js'
+import { TenantLeg } from './tenant-leg.js'
 import { VisitLeg } from './visit-leg.js'
 
 /** What a path's legs are built from. */
@@ -34,7 +36,7 @@ export class JourneyLegInputs
 }
 
 /**
- * A path's legs in run order (the plan's Design table): legs 1–3 drive the live public edge; the rest hold their
+ * A path's legs in run order (the plan's Design table): legs 1–4 drive the live public edge; the rest hold their
  * place as pending legs with the dependencies that will make them runnable. Legs 5a (customer cluster) and 5b
  * (Hosted) are the path's own.
  */
@@ -57,7 +59,7 @@ export class JourneyLegs
             new VisitLeg(inputs.Browser, new WebsitePage(config.WebsiteUrl, config.CabinetUrl), inputs.Evidence),
             new RegisterLeg(session, cabinet, login, new CentralAccount(config.CentralIssuer), inputs.Identity, inputs.CampaignCode, inputs.Uncleaned, inputs.Waiter, inputs.Evidence),
             new PayLeg(session, cabinet, new PaddleCheckout(inputs.Waiter), inputs.Identity, config.PlanName, inputs.Waiter, inputs.Evidence),
-            new PendingLeg(N.Tenant, [D.EntitlementDelivery]),
+            new TenantLeg(new CabinetTenantsPage(session, cabinet, inputs.Waiter), inputs.Evidence),
             hive,
             new PendingLeg(N.Domain, [D.EntitlementDelivery, D.JourneyDns]),
             new PendingLeg(N.StaffSignIn, [D.EntitlementDelivery, hiveDependency, D.TenantRealm]),

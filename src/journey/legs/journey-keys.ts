@@ -8,6 +8,8 @@ export class JourneyKeys
     public static readonly Plan = 'plan'
     public static readonly Checkout = 'checkout'
     public static readonly Subscription = 'subscription'
+    public static readonly Tenant = 'tenant'
+    public static readonly TenantState = 'tenantState'
 }
 
 /** The values the state keys take. */
@@ -20,6 +22,7 @@ export enum JourneyState
     CheckoutPaid = 'paid',
     Active = 'active',
     CancelScheduled = 'cancel-scheduled',
+    TenantCreated = 'created',
 }
 
 /** The leg names, in run order (the report's rows and the context's started/completed lists). */

@@ -38,12 +38,17 @@ export class CabinetPage
     private static readonly NotRegistration = 'the registration link is not the cabinet\'s /register: '
     private static readonly Refused = 'the cabinet refused: '
     private static readonly Or = ' or '
+    // The cabinet's refusal copy other drivers tell apart (pragmatic-cabinet ui/src/shell/cabinet-copy.ts).
+    public static readonly FallbackError = 'Something went wrong. Please try again in a moment.'
+    public static readonly NotEntitledError = 'Your plan does not allow this. Check your subscription on the Account page.'
+    public static readonly NotAdminError = 'Your sign-in is not an administrator of this account.'
+    public static readonly UnavailableError = 'The service is not reachable right now. Please try again in a moment.'
     // The cabinet's own refusal copy (pragmatic-cabinet ui/src/shell/cabinet-copy.ts and the register page).
     private static readonly ErrorTexts: readonly string[] = [
-        'Something went wrong. Please try again in a moment.',
+        CabinetPage.FallbackError,
         'Please enter a name.',
         'An invitation code has only letters, digits and dashes.',
-        'Your plan does not allow this. Check your subscription on the Account page.',
+        CabinetPage.NotEntitledError,
         'Some of the details are not valid. Please check them and try again.',
         'That invitation or campaign code is not valid, has expired, or has been used up.',
         'Your sign-in has ended. Please sign in again.',
@@ -53,8 +58,8 @@ export class CabinetPage
         'This sign-in already belongs to an account.',
         'You already have a subscription.',
         'That plan cannot be bought online.',
-        'Your sign-in is not an administrator of this account.',
-        'The service is not reachable right now. Please try again in a moment.',
+        CabinetPage.NotAdminError,
+        CabinetPage.UnavailableError,
         'We could not complete this right now. Our team has been notified; please try again later.',
     ]
 
@@ -191,14 +196,26 @@ export class CabinetPage
         }, C.AccountDeadlineMs)
     }
 
-    private async ThrowRefusal(page: IJourneyPage): Promise<void>
+    /** The cabinet's refusal copy the page shows (`extra` is a section's own refusals), if any. */
+    private async ShownRefusal(page: IJourneyPage, extra: readonly string[] = []): Promise<string | undefined>
     {
-        for (const text of CabinetPage.ErrorTexts)
+        for (const text of [...CabinetPage.ErrorTexts, ...extra])
         {
             if (await page.HasText(text))
             {
-                throw new WaitAbortError(CabinetPage.Refused + text)
+                return text
             }
+        }
+        return undefined
+    }
+
+    /** Ends a wait at once when the page shows a refusal. */
+    public async ThrowRefusal(page: IJourneyPage, extra: readonly string[] = []): Promise<void>
+    {
+        const shown = await this.ShownRefusal(page, extra)
+        if (shown !== undefined)
+        {
+            throw new WaitAbortError(CabinetPage.Refused + shown)
         }
     }
 }

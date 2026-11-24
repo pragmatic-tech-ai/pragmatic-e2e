@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { CabinetPage } from '../drivers/cabinet-page.js'
+import { CabinetTenantsPage } from '../drivers/cabinet-tenants-page.js'
 import { CentralLoginPage } from '../drivers/central-login-page.js'
 import { CustomerSession } from '../drivers/customer-session.js'
 import { PaddleCheckout } from '../drivers/paddle-checkout.js'
@@ -12,7 +13,9 @@ import { JourneyPath } from '../journey-path.js'
 import { JourneyKeys, JourneyLegName, JourneyState } from '../legs/journey-keys.js'
 import { JourneyLegInputs, JourneyLegs } from '../legs/journey-legs.js'
 import { PayLeg } from '../legs/pay-leg.js'
+import { PendingLeg } from '../legs/pending-leg.js'
 import { RegisterLeg, type IUncleanedRuns } from '../legs/register-leg.js'
+import { TenantLeg } from '../legs/tenant-leg.js'
 import { VisitLeg } from '../legs/visit-leg.js'
 import { CentralAccount } from '../live/central-account.js'
 import { JourneyIdentity } from '../live/journey-identity.js'
@@ -417,6 +420,343 @@ describe('PayLeg', () =>
     })
 })
 
+describe('TenantLeg', () =>
+{
+    const T = CabinetTenantsPage
+    const C = CabinetPage
+    const Suspended = 'Your subscription is suspended, so this is not available. Check your subscription on the Account page.'
+    const SignInEnded = 'Your sign-in has ended. Please sign in again.'
+    /** A press the page has not answered yet (still busy). */
+    const NoAnswer = ''
+
+    /** A clock that records each sleep and runs a hook after it (a list that finishes loading). */
+    class HookedClock extends FakeClock
+    {
+        public readonly Sleeps: number[] = []
+        public OnSleep: (() => void) | undefined
+
+        public override async Sleep(ms: number): Promise<void>
+        {
+            await super.Sleep(ms)
+            this.Sleeps.push(ms)
+            this.OnSleep?.()
+        }
+    }
+
+    class TenantScenario extends Scenario
+    {
+        public readonly TenantId = 'journey-run-0001-e'
+        public readonly Clock = new HookedClock()
+        public readonly TenantWaiter = new Waiter(this.Clock, 1000)
+        public readonly TenantCabinet = new CabinetPage(Cabinet, this.TenantWaiter)
+        public readonly TenantSession = new CustomerSession(this.Browser, this.TenantCabinet, this.Login, this.Identity, 'login.example', this.TenantWaiter)
+        /** What each press of "Create tenant" answers, in turn; past the end the tenant is created. */
+        public readonly Answers: string[] = []
+        /** What each load of the list answers, in turn (a refusal text); past the end it loads. */
+        public readonly ListAnswers: string[] = []
+        /** The client's tenants as the console holds them. */
+        public readonly Server: string[] = []
+        /** A settling answer (taken, limit-reached) whose tenant is the run's own: an earlier press landed. */
+        public SettleIsOwn = false
+        /** The console records a confirmed create (false: the notice shows but the reload does not list it). */
+        public Records = true
+        /** Sleeps a list load stays on "Loading tenants..." before it answers. */
+        public LoadingSleeps = 0
+        public Creates = 0
+        public Gotos = 0
+        private loaded: string[] = []
+
+        public Wire(): void
+        {
+            this.Context.Set(JourneyKeys.ClientName, this.ClientName)
+            this.Page.OnGoto.set(Cabinet + C.RootPath, () =>
+            {
+                this.Gotos++
+                this.ShowAccount([C.ActiveState, T.NavLabel])
+            })
+            this.Page.OnClick.set(T.NavLabel, () => this.Load())
+            this.Page.OnClick.set(T.CreateButton, () => this.Press())
+        }
+
+        public ShowTenants(list: readonly string[], extra: readonly string[]): void
+        {
+            this.Page.Show(Cabinet + C.RootPath, [T.NavLabel, T.FormTitle, T.CreateButton, this.ClientName, ...list, ...extra],
+                [[T.TenantIdSelector, 1], [T.DisplayNameSelector, 1]])
+        }
+
+        public TenantLeg(): TenantLeg
+        {
+            return new TenantLeg(new CabinetTenantsPage(this.TenantSession, this.TenantCabinet, this.TenantWaiter), this.Evidence.Evidence)
+        }
+
+        private Load(): void
+        {
+            const refusal = this.ListAnswers.shift()
+            if (refusal !== undefined)
+            {
+                this.ShowTenants([], [refusal])
+                return
+            }
+            let left = this.LoadingSleeps
+            const answer = (): void =>
+            {
+                this.loaded = [...this.Server]
+                this.ShowTenants(this.List(), [])
+            }
+            if (left === 0)
+            {
+                answer()
+                return
+            }
+            this.ShowTenants([], [T.Loading])
+            this.Clock.OnSleep = () =>
+            {
+                left--
+                if (left === 0)
+                {
+                    this.Clock.OnSleep = undefined
+                    answer()
+                }
+            }
+        }
+
+        private Press(): void
+        {
+            this.Creates++
+            const answer = this.Answers.shift()
+            if (answer === NoAnswer)
+            {
+                return
+            }
+            if (answer !== undefined)
+            {
+                if ((answer === T.TakenText || answer === T.LimitReachedText) && this.SettleIsOwn)
+                {
+                    this.Server.push(this.TenantId)
+                }
+                this.ShowTenants(this.List(), [answer])
+                return
+            }
+            if (this.Records)
+            {
+                this.Server.push(this.TenantId)
+            }
+            this.loaded = [...this.Server]
+            this.ShowTenants(this.List(), [T.CreatedPrefix + this.TenantId + T.CreatedSuffix])
+        }
+
+        /** The table as last loaded: its header and rows, or the empty text. */
+        private List(): string[]
+        {
+            return this.loaded.length === 0 ? [T.EmptyList] : [T.ListHeader, ...this.loaded]
+        }
+    }
+
+    it('creates the path\'s tenant on the cabinet\'s Tenants page, proves it by a reload and records its id, at the slow pace', async () =>
+    {
+        const s = new TenantScenario()
+        s.Wire()
+        await s.TenantLeg().Run(s.Context)
+        assert.equal(s.Context.Get(JourneyKeys.Tenant), s.TenantId)
+        assert.equal(s.Context.Get(JourneyKeys.TenantState), JourneyState.TenantCreated)
+        assert.ok(s.Page.Calls.includes('fill ' + T.TenantIdSelector + '#0 ' + s.TenantId))
+        assert.ok(s.Page.Calls.includes('fill ' + T.DisplayNameSelector + '#0 Journey run-0001 enrolled'))
+        assert.equal(s.Creates, 1)
+        assert.equal(s.Gotos, 2, 'opened, then reloaded for the evidence')
+        assert.ok(s.Clock.Sleeps.length > 0 && s.Clock.Sleeps.every(ms => ms === T.PressIntervalMs), 'every wait polls at the press interval: ' + s.Clock.Sleeps.join(','))
+        assert.ok(s.Evidence.Sink.Lines.some(l => l.includes('created tenant ' + s.TenantId + ' and the reloaded list shows it')))
+        s.Evidence.Folder.Dispose()
+    })
+
+    it('a list still loading is waited for, not reopened', async () =>
+    {
+        const s = new TenantScenario()
+        s.LoadingSleeps = 2
+        s.Wire()
+        await s.TenantLeg().Run(s.Context)
+        assert.equal(s.Gotos, 2)
+        assert.equal(s.Context.Get(JourneyKeys.TenantState), JourneyState.TenantCreated)
+        s.Evidence.Folder.Dispose()
+    })
+
+    it('a list refused while the statement is on its way (not an admin, not in plan) is reopened until it loads', async () =>
+    {
+        const s = new TenantScenario()
+        s.ListAnswers.push(C.NotAdminError, T.NotInPlanText)
+        s.Wire()
+        await s.TenantLeg().Run(s.Context)
+        assert.equal(s.Gotos, 4, 'two reopenings, then the reload')
+        assert.equal(s.Creates, 1)
+        s.Evidence.Folder.Dispose()
+    })
+
+    it('a list refused for good (the sign-in ended) fails at once, and its clean notes no tenant (none was asked for)', async () =>
+    {
+        const s = new TenantScenario()
+        s.ListAnswers.push(SignInEnded)
+        s.Wire()
+        await assert.rejects(s.TenantLeg().Run(s.Context), /the cabinet refused: Your sign-in has ended/)
+        assert.equal(s.Creates, 0)
+        assert.equal(s.Context.Get(JourneyKeys.Tenant), undefined)
+        await s.TenantLeg().Clean(s.Context)
+        assert.ok(s.Evidence.Sink.Lines.some(l => l.includes('no tenant was created')))
+        s.Evidence.Folder.Dispose()
+    })
+
+    it('a list answered with unrecognised text (neither loaded nor loading) is reopened until it loads', async () =>
+    {
+        const s = new TenantScenario()
+        s.ListAnswers.push('Failed to fetch')
+        s.Wire()
+        await s.TenantLeg().Run(s.Context)
+        assert.equal(s.Gotos, 3, 'one reopening, then the reload')
+        assert.equal(s.Context.Get(JourneyKeys.TenantState), JourneyState.TenantCreated)
+        s.Evidence.Folder.Dispose()
+    })
+
+    it('waits through press refusals (not an admin, not in plan, the fallback of a lost answer), pressing Create again', async () =>
+    {
+        const s = new TenantScenario()
+        s.Answers.push(C.NotAdminError, T.NotInPlanText, C.FallbackError)
+        s.Wire()
+        await s.TenantLeg().Run(s.Context)
+        assert.equal(s.Creates, 4)
+        assert.ok(s.Clock.Sleeps.length >= 3 && s.Clock.Sleeps.every(ms => ms === T.PressIntervalMs), 'presses again at the press interval: ' + s.Clock.Sleeps.join(','))
+        assert.equal(s.Context.Get(JourneyKeys.TenantState), JourneyState.TenantCreated)
+        s.Evidence.Folder.Dispose()
+    })
+
+    it('a press left unanswered or answered with unrecognised text is pressed again', async () =>
+    {
+        const s = new TenantScenario()
+        s.Answers.push(NoAnswer, 'Failed to fetch')
+        s.Wire()
+        await s.TenantLeg().Run(s.Context)
+        assert.equal(s.Creates, 3)
+        assert.equal(s.Context.Get(JourneyKeys.TenantState), JourneyState.TenantCreated)
+        s.Evidence.Folder.Dispose()
+    })
+
+    it('a statement that never arrives times out naming the last refusal; the id is already recorded for the clean', async () =>
+    {
+        const s = new TenantScenario()
+        for (let i = 0; i < 1000; i++)
+        {
+            s.Answers.push(C.NotAdminError)
+        }
+        s.Wire()
+        await assert.rejects(s.TenantLeg().Run(s.Context), /the tenant journey-run-0001-e to be created.*not an administrator/)
+        assert.equal(s.Context.Get(JourneyKeys.TenantState), undefined)
+        assert.equal(s.Context.Get(JourneyKeys.Tenant), s.TenantId)
+        s.Evidence.Folder.Dispose()
+    })
+
+    it('a resumed Run whose tenant is already listed passes without creating it again', async () =>
+    {
+        const s = new TenantScenario()
+        s.Server.push(s.TenantId)
+        s.Wire()
+        await s.TenantLeg().Run(s.Context)
+        assert.equal(s.Creates, 0)
+        assert.equal(s.Context.Get(JourneyKeys.TenantState), JourneyState.TenantCreated)
+        assert.ok(s.Evidence.Sink.Lines.some(l => l.includes('resumed: the tenant ' + s.TenantId + ' is already listed')))
+        s.Evidence.Folder.Dispose()
+    })
+
+    it('a resumed Run whose list is refused at first still finds its tenant once the list loads', async () =>
+    {
+        const s = new TenantScenario()
+        s.Server.push(s.TenantId)
+        s.ListAnswers.push(C.UnavailableError)
+        s.Wire()
+        await s.TenantLeg().Run(s.Context)
+        assert.equal(s.Creates, 0)
+        assert.equal(s.Context.Get(JourneyKeys.TenantState), JourneyState.TenantCreated)
+        s.Evidence.Folder.Dispose()
+    })
+
+    it('limit-reached or tenant-taken for the run\'s own tenant (an earlier press landed) passes once the reload lists it', async () =>
+    {
+        for (const answer of [T.LimitReachedText, T.TakenText])
+        {
+            const s = new TenantScenario()
+            s.Answers.push(answer)
+            s.SettleIsOwn = true
+            s.Wire()
+            await s.TenantLeg().Run(s.Context)
+            assert.equal(s.Creates, 1)
+            assert.equal(s.Context.Get(JourneyKeys.TenantState), JourneyState.TenantCreated)
+            assert.ok(s.Evidence.Sink.Lines.some(l => l.includes('an earlier press of this run landed')))
+            s.Evidence.Folder.Dispose()
+        }
+    })
+
+    it('limit-reached or tenant-taken without the tenant in the reloaded list fails', async () =>
+    {
+        for (const answer of [T.LimitReachedText, T.TakenText])
+        {
+            const s = new TenantScenario()
+            s.Answers.push(answer)
+            s.Wire()
+            await assert.rejects(s.TenantLeg().Run(s.Context), /answered tenant-taken or limit-reached and the reloaded list does not show the tenant/)
+            assert.equal(s.Context.Get(JourneyKeys.TenantState), undefined)
+            s.Evidence.Folder.Dispose()
+        }
+    })
+
+    it('a confirmed tenant the reloaded list does not show fails', async () =>
+    {
+        const s = new TenantScenario()
+        s.Records = false
+        s.Wire()
+        await assert.rejects(s.TenantLeg().Run(s.Context), /confirmed the tenant but the reloaded list does not show it/)
+        assert.equal(s.Context.Get(JourneyKeys.TenantState), undefined)
+        s.Evidence.Folder.Dispose()
+    })
+
+    it('a final refusal (a suspended subscription) ends the leg at once', async () =>
+    {
+        const s = new TenantScenario()
+        s.Answers.push(Suspended)
+        s.Wire()
+        await assert.rejects(s.TenantLeg().Run(s.Context), /the cabinet refused: Your subscription is suspended/)
+        assert.equal(s.Creates, 1)
+        s.Evidence.Folder.Dispose()
+    })
+
+    it('tenant ids are the path\'s own and fit the cabinet\'s tenant id pattern', () =>
+    {
+        const ids = [JourneyPath.Enrolled, JourneyPath.Delegated, JourneyPath.Hosted].map(path => TenantLeg.TenantIdFor('20261124t1200-ab12', path))
+        assert.deepEqual(ids, ['journey-20261124t1200-ab12-e', 'journey-20261124t1200-ab12-d', 'journey-20261124t1200-ab12-h'])
+        assert.ok(ids.every(id => TenantLeg.TenantIdPattern.test(id)))
+        assert.throws(() => TenantLeg.TenantIdFor('a'.repeat(30), JourneyPath.Enrolled), /makes no tenant id the cabinet accepts/)
+    })
+
+    it('clean leaves the tenant in place (no customer operation leaves a tenant) and touches no page', async () =>
+    {
+        const s = new TenantScenario()
+        s.Wire()
+        s.Context.Set(JourneyKeys.Tenant, s.TenantId)
+        s.Context.Set(JourneyKeys.TenantState, JourneyState.TenantCreated)
+        await s.TenantLeg().Clean(s.Context)
+        assert.deepEqual(s.Page.Calls, [])
+        assert.ok(s.Evidence.Sink.Lines.some(l => l.includes('tenant ' + s.TenantId + ' stays under its journey client')))
+        s.Evidence.Folder.Dispose()
+    })
+
+    it('clean after an unconfirmed create says the tenant may exist; before any press there is nothing to note', async () =>
+    {
+        const s = new TenantScenario()
+        await s.TenantLeg().Clean(s.Context)
+        assert.ok(s.Evidence.Sink.Lines.some(l => l.includes('no tenant was created')))
+        s.Context.Set(JourneyKeys.Tenant, s.TenantId)
+        await s.TenantLeg().Clean(s.Context)
+        assert.ok(s.Evidence.Sink.Lines.some(l => l.includes(s.TenantId + ' was asked for but not confirmed')))
+        assert.deepEqual(s.Page.Calls, [])
+        s.Evidence.Folder.Dispose()
+    })
+})
+
 describe('JourneyLegs', () =>
 {
     const document = {
@@ -434,6 +774,10 @@ describe('JourneyLegs', () =>
         assert.deepEqual(JourneyLegs.For(JourneyPath.Hosted, inputs).map(l => l.Name), [N.Visit, N.Register, N.Pay, N.Tenant, N.PlaceHosted, N.Domain, N.StaffSignIn, N.Plexus, N.DeployGraphs])
         const hosted = JourneyLegs.For(JourneyPath.Hosted, inputs)
         assert.ok(hosted.find(l => l.Name === N.Plexus)!.Dependencies.includes(JourneyDependency.HostedPlacement), 'the Hosted path later legs wait on the Hosted placement')
+        const tenant = JourneyLegs.For(JourneyPath.Enrolled, inputs)[3]
+        assert.ok(tenant instanceof TenantLeg, 'the tenant leg is built')
+        assert.ok(!(tenant instanceof PendingLeg))
+        assert.deepEqual(tenant.Dependencies, [JourneyDependency.Cabinet, JourneyDependency.CentralLogin, JourneyDependency.EntitlementDelivery])
         for (const leg of JourneyLegs.For(JourneyPath.Delegated, inputs).slice(3))
         {
             assert.ok(leg.Dependencies.includes(JourneyDependency.EntitlementDelivery), leg.Name + ' waits on the entitlement delivery')
@@ -468,6 +812,7 @@ describe('JourneyConfig', () =>
         const config = JourneyConfig.Load({})
         assert.equal(config.CentralIssuer, 'https://login.pragmatic-tech.ai/realms/central')
         assert.ok(config.LiveDependencies.has(JourneyDependency.JourneyMail))
-        assert.ok(!config.LiveDependencies.has(JourneyDependency.EntitlementDelivery), 'D4\'s delivery is not live yet')
+        assert.ok(config.LiveDependencies.has(JourneyDependency.EntitlementDelivery), 'D4\'s delivery is live (2026-11-23)')
+        assert.ok(!config.LiveDependencies.has(JourneyDependency.JourneyDns), 'the journey DNS token is not minted yet')
     })
 })
