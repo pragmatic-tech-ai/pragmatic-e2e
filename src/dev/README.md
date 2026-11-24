@@ -93,7 +93,8 @@ Log into the tenant panel at `https://acme.lvh.me` as `owner@acme.test` with tha
 - TLS uses a local dev CA (not a public one); hence the one-time `trust-ca.ps1` step.
 - Each additional tenant gets its own IdP CA under `<data folder>/idp/<tenant>/tls/ca.crt` (the data folder is
   `PRAGMATIC_DEV_DATA_ROOT`, default `~/.pragmatic/dev-stack/data`). It is name-constrained to
-  `host.docker.internal` and `127.0.0.1`, so trust it for your Windows user with `dev-ca-trust.ps1` (see below).
+  the DNS names `host.docker.internal` and `localhost` with every IP address excluded (an older one: see "Local platform
+  IdP certificates"), so trust it for your Windows user with `dev-ca-trust.ps1` (see below).
 
 ## Development console certificates
 
