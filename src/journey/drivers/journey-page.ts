@@ -26,6 +26,13 @@ export interface IJourneyPage
     HasText(text: string): Promise<boolean>
     /** The text of the first visible element whose text matches `pattern` ('' when none): a value the page shows. */
     TextMatching(pattern: RegExp): Promise<string>
+    /** The texts of every visible element whose text matches `pattern`, top to bottom. */
+    TextsMatching(pattern: RegExp): Promise<string[]>
+    /**
+     * The text matching `pattern` in the same row as the visible `anchor` text (vertically within a row's height of it;
+     * '' when none): a row's state beside its label, never the same word elsewhere on the page.
+     */
+    TextNear(anchor: string, pattern: RegExp): Promise<string>
     ClickText(text: string): Promise<void>
     /** Clicks the visible `text` closest (vertically) to the visible `anchor` text: a row's button beside its label. */
     ClickTextNear(text: string, anchor: string): Promise<void>
@@ -91,6 +98,8 @@ export class PlaywrightJourneyPage implements IJourneyPage
     private static readonly HrefAttribute = 'href'
     private static readonly NoText = 'no visible text on the page: '
     private static readonly NoValue = ''
+    /** Half a table row: the cabinet's and the console's rows are 40 px or more apart. */
+    private static readonly RowTolerancePx = 16
     private static readonly ActionTimeoutMs = 15_000
     private static readonly LoadState = 'domcontentloaded'
     private static readonly NoAnimations = 'disabled'
@@ -137,6 +146,44 @@ export class PlaywrightJourneyPage implements IJourneyPage
             }
         }
         return PlaywrightJourneyPage.NoValue
+    }
+
+    public async TextsMatching(pattern: RegExp): Promise<string[]>
+    {
+        const matches = this.page.getByText(pattern)
+        const count = await matches.count()
+        const found: { Y: number, Text: string }[] = []
+        for (let i = 0; i < count; i++)
+        {
+            const box = await matches.nth(i).boundingBox()
+            if (box !== null && await matches.nth(i).isVisible())
+            {
+                found.push({ Y: box.y, Text: (await matches.nth(i).textContent()) ?? PlaywrightJourneyPage.NoValue })
+            }
+        }
+        return found.sort((a, b) => a.Y - b.Y).map(entry => entry.Text)
+    }
+
+    public async TextNear(anchor: string, pattern: RegExp): Promise<string>
+    {
+        const P = PlaywrightJourneyPage
+        const anchorBox = await this.page.getByText(anchor, { exact: true }).first().boundingBox()
+        if (anchorBox === null)
+        {
+            return P.NoValue
+        }
+        const middle = anchorBox.y + anchorBox.height / 2
+        const matches = this.page.getByText(pattern)
+        const count = await matches.count()
+        for (let i = 0; i < count; i++)
+        {
+            const box = await matches.nth(i).boundingBox()
+            if (box !== null && Math.abs(box.y + box.height / 2 - middle) <= P.RowTolerancePx && await matches.nth(i).isVisible())
+            {
+                return (await matches.nth(i).textContent()) ?? P.NoValue
+            }
+        }
+        return P.NoValue
     }
 
     public async ClickText(text: string): Promise<void>

@@ -12,10 +12,11 @@ import { JourneyDependency } from '../journey-dependency.js'
 import type { IJourneyLeg } from '../journey-leg.js'
 import { JourneyPath } from '../journey-path.js'
 import { CentralAccount } from '../live/central-account.js'
+import { ConsoleTrust, type IConsoleTrust } from '../live/console-trust.js'
 import { CustomerCluster } from '../live/customer-cluster.js'
 import type { JourneyIdentity } from '../live/journey-identity.js'
 import { NodeProcessRunner, type IProcessRunner } from '../live/process-runner.js'
-import type { Waiter } from '../waiter.js'
+import { LegAbort, type Waiter } from '../waiter.js'
 import { JourneyLegName } from './journey-keys.js'
 import { InstallAndEnrolLeg } from './install-and-enrol-leg.js'
 import { PayLeg } from './pay-leg.js'
@@ -35,7 +36,9 @@ export class JourneyLegInputs
         public readonly Uncleaned: IUncleanedRuns,
         public readonly Waiter: Waiter,
         public readonly Evidence: Evidence,
-        public readonly Runner: IProcessRunner = new NodeProcessRunner())
+        public readonly Abort: LegAbort = new LegAbort(),
+        public readonly Runner: IProcessRunner = new NodeProcessRunner(),
+        public readonly Trust: IConsoleTrust = new ConsoleTrust())
     {
     }
 }
@@ -58,7 +61,7 @@ export class JourneyLegs
         const session = new CustomerSession(inputs.Browser, cabinet, login, inputs.Identity, loginHost, inputs.Waiter)
         const hive = path === JourneyPath.Hosted
             ? new PendingLeg(N.PlaceHosted, [D.EntitlementDelivery, D.HostedPlacement])
-            : new InstallAndEnrolLeg(inputs.Browser, new CabinetHivesPage(session, cabinet, inputs.Waiter), new CustomerCluster(inputs.Runner, config.CustomerCluster), inputs.Waiter, inputs.Evidence)
+            : new InstallAndEnrolLeg(inputs.Browser, new CabinetHivesPage(session, cabinet, inputs.Browser, inputs.Waiter), new CustomerCluster(inputs.Runner, config.CustomerCluster, inputs.Abort), inputs.Trust, inputs.Waiter, inputs.Evidence)
         const hiveDependency = path === JourneyPath.Hosted ? D.HostedPlacement : D.CustomerCluster
         return [
             new VisitLeg(inputs.Browser, new WebsitePage(config.WebsiteUrl, config.CabinetUrl), inputs.Evidence),

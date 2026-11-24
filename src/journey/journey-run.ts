@@ -284,7 +284,7 @@ export class JourneyRun
         try
         {
             const context = this.ContextFor(path)
-            const inputs = new JourneyLegInputs(config, browser, identity, code, new UncleanedRunFinder(config.RunsDir), new Waiter(undefined, undefined, abort), evidence)
+            const inputs = new JourneyLegInputs(config, browser, identity, code, new UncleanedRunFinder(config.RunsDir), new Waiter(undefined, undefined, abort), evidence, abort)
             const journey = new Journey(this.factory.Legs(path, inputs), config.LiveDependencies, this.Report, evidence, this.folder, browser, this.stop, abort)
             if (this.mode === JourneyMode.Clean)
             {

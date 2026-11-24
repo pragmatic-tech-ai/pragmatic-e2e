@@ -128,6 +128,8 @@ export class FakePage implements IJourneyPage
     public readonly OnPress = new Map<string, () => void>()
     public readonly Links: string[] = []
     public readonly Frames = new Map<string, FakeFrame>()
+    /** Each row's texts by its anchor text (a hive id, an intent's sentence). */
+    public readonly Rows = new Map<string, string[]>()
 
     public async Goto(url: string): Promise<void>
     {
@@ -149,6 +151,21 @@ export class FakePage implements IJourneyPage
     public async TextMatching(pattern: RegExp): Promise<string>
     {
         return [...this.Texts].find(text => pattern.test(text)) ?? ''
+    }
+
+    public async TextsMatching(pattern: RegExp): Promise<string[]>
+    {
+        return [...this.Texts].filter(text => pattern.test(text))
+    }
+
+    /** The row's texts (`Rows`, by its anchor); a text elsewhere on the page is not in the row. */
+    public async TextNear(anchor: string, pattern: RegExp): Promise<string>
+    {
+        if (!this.Texts.has(anchor))
+        {
+            return ''
+        }
+        return (this.Rows.get(anchor) ?? []).find(text => pattern.test(text)) ?? ''
     }
 
     public async ClickText(text: string): Promise<void>
@@ -231,8 +248,14 @@ export class FakeBrowser implements IJourneyBrowser, ILegSupervisor
     public Resets = 0
     public Closed = 0
 
+    /** As the real browser: nothing while hidden; otherwise one capture counted (the fake writes no file). */
     public async Capture(_leg: string): Promise<readonly string[]>
     {
+        if (this.ScreenshotsHidden)
+        {
+            return []
+        }
+        this.Captures += 1
         return []
     }
 
@@ -246,9 +269,20 @@ export class FakeBrowser implements IJourneyBrowser, ILegSupervisor
         return this.Current
     }
 
-    public async ConsolePage(): Promise<IJourneyPage>
+    /** The pins the leg asked the console's browser to accept. */
+    public readonly ConsolePins: string[][] = []
+    public ScreenshotsHidden = false
+    public Captures = 0
+
+    public async ConsolePage(trustedSpki: readonly string[]): Promise<IJourneyPage>
     {
+        this.ConsolePins.push([...trustedSpki])
         return this.Console
+    }
+
+    public HideScreenshots(hidden: boolean): void
+    {
+        this.ScreenshotsHidden = hidden
     }
 
     public async Reset(): Promise<void>

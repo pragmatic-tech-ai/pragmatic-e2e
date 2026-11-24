@@ -87,15 +87,23 @@ export class LegAbortToken
 {
     private static readonly AbortedMessage = 'the leg was aborted'
     private tripped = false
+    private readonly controller = new AbortController()
 
     public get Tripped(): boolean
     {
         return this.tripped
     }
 
+    /** Aborted when the token trips: a program the leg started (helm, kubectl) is killed with it. */
+    public get Signal(): AbortSignal
+    {
+        return this.controller.signal
+    }
+
     public Trip(): void
     {
         this.tripped = true
+        this.controller.abort()
     }
 
     public Check(): void

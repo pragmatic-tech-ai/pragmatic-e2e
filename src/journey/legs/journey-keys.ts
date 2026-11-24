@@ -14,6 +14,8 @@ export class JourneyKeys
     public static readonly HiveState = 'hiveState'
     public static readonly ConsoleUrl = 'consoleUrl'
     public static readonly ConsoleHost = 'consoleHost'
+    public static readonly IdpHost = 'idpHost'
+    public static readonly ConsoleTrusted = 'consoleTrusted'
     public static readonly Environment = 'environment'
     public static readonly EnvironmentState = 'environmentState'
 }
@@ -35,6 +37,7 @@ export enum JourneyState
     HiveLeft = 'left',
     EnvironmentApproved = 'approved',
     EnvironmentReady = 'ready',
+    ConsoleTrusted = 'verified',
 }
 
 /** The leg names, in run order (the report's rows and the context's started/completed lists). */

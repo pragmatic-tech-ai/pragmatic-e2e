@@ -16,25 +16,28 @@ export class ProcessResult
 /** Runs a program with an argument vector (never a shell string); a fake in leg tests. */
 export interface IProcessRunner
 {
-    Run(program: string, argv: readonly string[], timeoutMs: number): Promise<ProcessResult>
+    /** Runs to its end; an aborted `signal` kills the program, and the promise still settles only once it has exited. */
+    Run(program: string, argv: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<ProcessResult>
 }
 
 /**
  * IProcessRunner over node's execFile: no shell, so nothing in an argument is re-read; output capped; a program that
- * runs past its deadline is killed and answers a non-zero code. Never throws for a failed program.
+ * runs past its deadline, or whose signal aborts, is killed and answers a non-zero code. Never throws for a failed program.
  */
 export class NodeProcessRunner implements IProcessRunner
 {
     private static readonly MaxBuffer = 32 * 1024 * 1024
     private static readonly Encoding = 'utf8'
     private static readonly Failed = 1
+    private static readonly KillSignal = 'SIGTERM'
 
-    public Run(program: string, argv: readonly string[], timeoutMs: number): Promise<ProcessResult>
+    public Run(program: string, argv: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<ProcessResult>
     {
         const N = NodeProcessRunner
         return new Promise(resolve =>
         {
-            execFile(program, [...argv], { encoding: N.Encoding, maxBuffer: N.MaxBuffer, timeout: timeoutMs, windowsHide: true }, (error, stdout, stderr) =>
+            // execFile answers only after the program exited (also when the signal killed it), so nothing outlives the call.
+            execFile(program, [...argv], { encoding: N.Encoding, maxBuffer: N.MaxBuffer, timeout: timeoutMs, windowsHide: true, signal, killSignal: N.KillSignal }, (error, stdout, stderr) =>
             {
                 const code = error === null ? 0 : typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : N.Failed
                 resolve(new ProcessResult(code, stdout, stderr))
