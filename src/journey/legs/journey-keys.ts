@@ -10,6 +10,12 @@ export class JourneyKeys
     public static readonly Subscription = 'subscription'
     public static readonly Tenant = 'tenant'
     public static readonly TenantState = 'tenantState'
+    public static readonly Hive = 'hive'
+    public static readonly HiveState = 'hiveState'
+    public static readonly ConsoleUrl = 'consoleUrl'
+    public static readonly ConsoleHost = 'consoleHost'
+    public static readonly Environment = 'environment'
+    public static readonly EnvironmentState = 'environmentState'
 }
 
 /** The values the state keys take. */
@@ -23,6 +29,12 @@ export enum JourneyState
     Active = 'active',
     CancelScheduled = 'cancel-scheduled',
     TenantCreated = 'created',
+    EngineInstalling = 'installing',
+    EngineInstalled = 'installed',
+    HiveEnrolled = 'enrolled',
+    HiveLeft = 'left',
+    EnvironmentApproved = 'approved',
+    EnvironmentReady = 'ready',
 }
 
 /** The leg names, in run order (the report's rows and the context's started/completed lists). */

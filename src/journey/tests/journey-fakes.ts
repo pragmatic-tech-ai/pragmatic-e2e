@@ -146,6 +146,11 @@ export class FakePage implements IJourneyPage
         return this.Texts.has(text)
     }
 
+    public async TextMatching(pattern: RegExp): Promise<string>
+    {
+        return [...this.Texts].find(text => pattern.test(text)) ?? ''
+    }
+
     public async ClickText(text: string): Promise<void>
     {
         if (!this.Texts.has(text))
@@ -222,6 +227,7 @@ export class FakePage implements IJourneyPage
 export class FakeBrowser implements IJourneyBrowser, ILegSupervisor
 {
     public readonly Current = new FakePage()
+    public readonly Console = new FakePage()
     public Resets = 0
     public Closed = 0
 
@@ -238,6 +244,11 @@ export class FakeBrowser implements IJourneyBrowser, ILegSupervisor
     public async Page(): Promise<IJourneyPage>
     {
         return this.Current
+    }
+
+    public async ConsolePage(): Promise<IJourneyPage>
+    {
+        return this.Console
     }
 
     public async Reset(): Promise<void>

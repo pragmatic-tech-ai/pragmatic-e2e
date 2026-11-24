@@ -1,3 +1,4 @@
+import { CabinetHivesPage } from '../drivers/cabinet-hives-page.js'
 import { CabinetPage } from '../drivers/cabinet-page.js'
 import { CabinetTenantsPage } from '../drivers/cabinet-tenants-page.js'
 import { CentralLoginPage } from '../drivers/central-login-page.js'
@@ -11,9 +12,12 @@ import { JourneyDependency } from '../journey-dependency.js'
 import type { IJourneyLeg } from '../journey-leg.js'
 import { JourneyPath } from '../journey-path.js'
 import { CentralAccount } from '../live/central-account.js'
+import { CustomerCluster } from '../live/customer-cluster.js'
 import type { JourneyIdentity } from '../live/journey-identity.js'
+import { NodeProcessRunner, type IProcessRunner } from '../live/process-runner.js'
 import type { Waiter } from '../waiter.js'
 import { JourneyLegName } from './journey-keys.js'
+import { InstallAndEnrolLeg } from './install-and-enrol-leg.js'
 import { PayLeg } from './pay-leg.js'
 import { PendingLeg } from './pending-leg.js'
 import { RegisterLeg, type IUncleanedRuns } from './register-leg.js'
@@ -30,15 +34,16 @@ export class JourneyLegInputs
         public readonly CampaignCode: string | undefined,
         public readonly Uncleaned: IUncleanedRuns,
         public readonly Waiter: Waiter,
-        public readonly Evidence: Evidence)
+        public readonly Evidence: Evidence,
+        public readonly Runner: IProcessRunner = new NodeProcessRunner())
     {
     }
 }
 
 /**
  * A path's legs in run order (the plan's Design table): legs 1–4 drive the live public edge; the rest hold their
- * place as pending legs with the dependencies that will make them runnable. Legs 5a (customer cluster) and 5b
- * (Hosted) are the path's own.
+ * place as pending legs with the dependencies that will make them runnable. Legs 5a (customer cluster: install,
+ * enrol, an environment intent; C3.4) and 5b (Hosted) are the path's own.
  */
 export class JourneyLegs
 {
@@ -53,7 +58,7 @@ export class JourneyLegs
         const session = new CustomerSession(inputs.Browser, cabinet, login, inputs.Identity, loginHost, inputs.Waiter)
         const hive = path === JourneyPath.Hosted
             ? new PendingLeg(N.PlaceHosted, [D.EntitlementDelivery, D.HostedPlacement])
-            : new PendingLeg(N.InstallAndEnrol, [D.EntitlementDelivery, D.CustomerCluster, D.DelegatedIntents])
+            : new InstallAndEnrolLeg(inputs.Browser, new CabinetHivesPage(session, cabinet, inputs.Waiter), new CustomerCluster(inputs.Runner, config.CustomerCluster), inputs.Waiter, inputs.Evidence)
         const hiveDependency = path === JourneyPath.Hosted ? D.HostedPlacement : D.CustomerCluster
         return [
             new VisitLeg(inputs.Browser, new WebsitePage(config.WebsiteUrl, config.CabinetUrl), inputs.Evidence),

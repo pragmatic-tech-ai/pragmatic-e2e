@@ -24,6 +24,8 @@ export interface IJourneyPage
     Goto(url: string): Promise<void>
     Url(): string
     HasText(text: string): Promise<boolean>
+    /** The text of the first visible element whose text matches `pattern` ('' when none): a value the page shows. */
+    TextMatching(pattern: RegExp): Promise<string>
     ClickText(text: string): Promise<void>
     /** Clicks the visible `text` closest (vertically) to the visible `anchor` text: a row's button beside its label. */
     ClickTextNear(text: string, anchor: string): Promise<void>
@@ -88,6 +90,7 @@ export class PlaywrightJourneyPage implements IJourneyPage
     private static readonly AnchorSelector = 'a[href]'
     private static readonly HrefAttribute = 'href'
     private static readonly NoText = 'no visible text on the page: '
+    private static readonly NoValue = ''
     private static readonly ActionTimeoutMs = 15_000
     private static readonly LoadState = 'domcontentloaded'
     private static readonly NoAnimations = 'disabled'
@@ -120,6 +123,20 @@ export class PlaywrightJourneyPage implements IJourneyPage
             }
         }
         return false
+    }
+
+    public async TextMatching(pattern: RegExp): Promise<string>
+    {
+        const matches = this.page.getByText(pattern)
+        const count = await matches.count()
+        for (let i = 0; i < count; i++)
+        {
+            if (await matches.nth(i).isVisible())
+            {
+                return (await matches.nth(i).textContent()) ?? PlaywrightJourneyPage.NoValue
+            }
+        }
+        return PlaywrightJourneyPage.NoValue
     }
 
     public async ClickText(text: string): Promise<void>

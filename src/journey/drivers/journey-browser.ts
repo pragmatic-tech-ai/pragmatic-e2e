@@ -9,6 +9,11 @@ export interface IJourneyBrowser
 {
     /** The path's one page (created on first use, in the path's own browser context). */
     Page(): Promise<IJourneyPage>
+    /**
+     * The page of the customer's own engine console (leg 5a): a context of its own that accepts the engine's
+     * self-signed certificate (the proof cluster's `tls.mode=self-signed` development CA) and nothing else is opened in.
+     */
+    ConsolePage(): Promise<IJourneyPage>
     /** Drops the page and its context (cookies, the central login's SSO session): the next Page() starts fresh. */
     Reset(): Promise<void>
     Close(): Promise<void>
@@ -32,6 +37,8 @@ export class JourneyBrowser implements IJourneyBrowser, ILegSupervisor
     private browser: Browser | undefined
     private context: BrowserContext | undefined
     private page: PlaywrightJourneyPage | undefined
+    private consoleContext: BrowserContext | undefined
+    private consolePage: PlaywrightJourneyPage | undefined
 
     public constructor(private readonly evidence: Evidence, private readonly headed: boolean, private readonly abort: LegAbort = new LegAbort())
     {
@@ -52,11 +59,27 @@ export class JourneyBrowser implements IJourneyBrowser, ILegSupervisor
         return this.page
     }
 
+    public async ConsolePage(): Promise<IJourneyPage>
+    {
+        const J = JourneyBrowser
+        this.abort.Check()
+        if (this.consolePage === undefined)
+        {
+            this.browser ??= await chromium.launch({ headless: !this.headed, channel: J.Channel, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false })
+            this.consoleContext = await this.browser.newContext({ locale: J.Locale, viewport: { width: J.ViewportWidth, height: J.ViewportHeight }, ignoreHTTPSErrors: true })
+            this.consolePage = new PlaywrightJourneyPage(await this.consoleContext.newPage())
+        }
+        return this.consolePage
+    }
+
     public async Reset(): Promise<void>
     {
         await this.context?.close()
         this.context = undefined
         this.page = undefined
+        await this.consoleContext?.close()
+        this.consoleContext = undefined
+        this.consolePage = undefined
     }
 
     public async Capture(leg: string): Promise<readonly string[]>
