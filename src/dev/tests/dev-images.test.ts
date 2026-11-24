@@ -130,9 +130,9 @@ describe('DevImages tags', () =>
         assert.equal(DevImages.TagOf(ReleaseApp.UiUnpack), EnvironmentWorkloadFactory.UiUnpackImage)
     })
 
-    it('the live loop bakes the environment images, the hive agent and the tenant IdP, all of them dev stack images', () =>
+    it('the live loop bakes the environment images (with the env server Postgres sidecar), the hive agent and the tenant IdP, all of them dev stack images', () =>
     {
-        assert.deepEqual(DevImages.LiveLoopApps, [ReleaseApp.EnvServer, ReleaseApp.UiUnpack, ReleaseApp.HiveAgent, ReleaseApp.TenantIdp])
+        assert.deepEqual(DevImages.LiveLoopApps, [ReleaseApp.EnvServer, ReleaseApp.UiUnpack, ReleaseApp.HiveAgent, ReleaseApp.TenantIdp, ReleaseApp.Postgres])
         assert.ok(DevImages.LiveLoopApps.every(app => DevImages.DevStackApps.includes(app)))
     })
 

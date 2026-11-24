@@ -329,9 +329,9 @@ describe('LiveLoopStack.ReleaseEnv', () =>
 
 describe('LiveLoopStack.KindImages', () =>
 {
-    it('loads the env server, UI unpack and hive agent dev images, the registry and environment Postgres onto the kind node', () =>
+    it('loads the env server, UI unpack, hive agent and the env server sidecar pragmatic-postgres dev images, the registry and the template data-source Postgres onto the kind node', () =>
     {
-        assert.deepEqual(LiveLoopStack.KindImages(), ['pragmatic-env-server:dev', 'pragmatic-ui-unpack:dev', 'pragmatic-hive-agent:dev', 'registry:2', 'postgres:16'])
+        assert.deepEqual(LiveLoopStack.KindImages(), ['pragmatic-env-server:dev', 'pragmatic-ui-unpack:dev', 'pragmatic-hive-agent:dev', 'pragmatic-postgres:local', 'registry:2', 'postgres:16'])
     })
 
     it('loads only images the stack bakes or pulls: every dev image among them is one of the live loop\'s baked images', () =>
@@ -341,6 +341,8 @@ describe('LiveLoopStack.KindImages', () =>
         {
             assert.ok(baked.includes(image), image)
         }
+        // The env server's pragmatic-postgres sidecar (A5): every environment pod runs the dev image beside the server.
+        assert.ok(LiveLoopStack.KindImages().includes(DevImages.TagOf(ReleaseApp.Postgres)))
         // The tenant IdP is baked but runs in local docker (the console's Docker IdP), not on the node.
         assert.ok(baked.includes(DevImages.TagOf(ReleaseApp.TenantIdp)))
         assert.ok(!LiveLoopStack.KindImages().includes(DevImages.TagOf(ReleaseApp.TenantIdp)))

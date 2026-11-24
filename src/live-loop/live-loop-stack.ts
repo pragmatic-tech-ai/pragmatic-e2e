@@ -575,10 +575,12 @@ export class LiveLoopStack
         return DevImages.SkipsBake(env) ? [] : DevImages.LiveLoopApps
     }
 
-    /** What up loads onto the kind node: the dev images the hive's pods run (the tenant IdP runs in local docker), the in-cluster registry and environment Postgres. */
+    /** What up loads onto the kind node: the dev images the hive's pods run (the tenant IdP runs in local docker; every
+     *  environment pod runs the env server beside its own pragmatic-postgres, A5), the in-cluster registry and the
+     *  templates' data-source Postgres. */
     public static KindImages(): readonly string[]
     {
-        const environments = [DevImages.TagOf(ReleaseApp.EnvServer), DevImages.TagOf(ReleaseApp.UiUnpack), DevImages.TagOf(ReleaseApp.HiveAgent)]
+        const environments = [DevImages.TagOf(ReleaseApp.EnvServer), DevImages.TagOf(ReleaseApp.UiUnpack), DevImages.TagOf(ReleaseApp.HiveAgent), DevImages.TagOf(ReleaseApp.Postgres)]
         return [...environments, InClusterRegistry.Image, LiveLoopStack.PostgresImage]
     }
 

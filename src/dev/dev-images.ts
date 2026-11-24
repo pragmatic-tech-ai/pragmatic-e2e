@@ -183,12 +183,13 @@ export class DevImages
         ReleaseApp.TenantIdp,
         ReleaseApp.Postgres,
     ]
-    /** What the live-loop stack runs from an image: environments (server, UI unpack), the hive agent it installs and the tenant IdP container. */
+    /** What the live-loop stack runs from an image: environments (server, UI unpack, and the server's own Postgres sidecar), the hive agent it installs and the tenant IdP container. */
     public static readonly LiveLoopApps: readonly ReleaseApp[] = [
         ReleaseApp.EnvServer,
         ReleaseApp.UiUnpack,
         ReleaseApp.HiveAgent,
         ReleaseApp.TenantIdp,
+        ReleaseApp.Postgres,
     ]
     /** The command a missing-image hint names (run from this repository's root), followed by the repository. */
     public static readonly BuildCommandPrefix = 'npx tsx src/dev/dev-images.ts '
