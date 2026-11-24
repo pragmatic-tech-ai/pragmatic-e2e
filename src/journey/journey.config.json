@@ -3,7 +3,7 @@
   "cabinetUrl": "https://cabinet.pragmatic-tech.ai",
   "centralIssuer": "https://login.pragmatic-tech.ai/realms/central",
   "edgeUrl": "https://agent.pragmatic-tech.ai",
-  "planName": "Starter",
+  "planName": "Journey standard",
   "emailDomain": "pragmatic-lab.com",
   "journeyDnsSubdomain": "journey.pragmatic-lab.com",
   "customerCluster": "pragmatic-customer",
