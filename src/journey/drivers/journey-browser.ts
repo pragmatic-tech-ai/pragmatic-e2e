@@ -88,8 +88,15 @@ export class JourneyBrowser implements IJourneyBrowser, ILegSupervisor
         this.screenshotsHidden = hidden
     }
 
+    public get ScreenshotsHidden(): boolean
+    {
+        return this.screenshotsHidden
+    }
+
     public async Reset(): Promise<void>
     {
+        // A fresh page shows none of what the hidden one did.
+        this.screenshotsHidden = false
         await this.context?.close()
         this.context = undefined
         this.page = undefined

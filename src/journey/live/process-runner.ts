@@ -22,7 +22,9 @@ export interface IProcessRunner
 
 /**
  * IProcessRunner over node's execFile: no shell, so nothing in an argument is re-read; output capped; a program that
- * runs past its deadline, or whose signal aborts, is killed and answers a non-zero code. Never throws for a failed program.
+ * runs past its deadline, or whose signal aborts, is killed and answers a non-zero code. execFile answers an abort
+ * before the child is gone, so the call waits for the child's own exit before it settles: nothing outlives it. Never
+ * throws for a failed program.
  */
 export class NodeProcessRunner implements IProcessRunner
 {
@@ -30,17 +32,23 @@ export class NodeProcessRunner implements IProcessRunner
     private static readonly Encoding = 'utf8'
     private static readonly Failed = 1
     private static readonly KillSignal = 'SIGTERM'
+    private static readonly ExitEvent = 'exit'
 
     public Run(program: string, argv: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<ProcessResult>
     {
         const N = NodeProcessRunner
         return new Promise(resolve =>
         {
-            // execFile answers only after the program exited (also when the signal killed it), so nothing outlives the call.
-            execFile(program, [...argv], { encoding: N.Encoding, maxBuffer: N.MaxBuffer, timeout: timeoutMs, windowsHide: true, signal, killSignal: N.KillSignal }, (error, stdout, stderr) =>
+            const child = execFile(program, [...argv], { encoding: N.Encoding, maxBuffer: N.MaxBuffer, timeout: timeoutMs, windowsHide: true, signal, killSignal: N.KillSignal }, (error, stdout, stderr) =>
             {
                 const code = error === null ? 0 : typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : N.Failed
-                resolve(new ProcessResult(code, stdout, stderr))
+                const result = new ProcessResult(code, stdout, stderr)
+                if (child.exitCode !== null || child.signalCode !== null)
+                {
+                    resolve(result)
+                    return
+                }
+                child.once(N.ExitEvent, () => resolve(result))
             })
         })
     }

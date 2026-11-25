@@ -288,6 +288,7 @@ export class FakeBrowser implements IJourneyBrowser, ILegSupervisor
     public async Reset(): Promise<void>
     {
         this.Resets++
+        this.ScreenshotsHidden = false
     }
 
     public async Close(): Promise<void>

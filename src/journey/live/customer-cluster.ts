@@ -33,13 +33,13 @@ class ClusterArgs
     public static readonly Uninstall = 'uninstall'
     public static readonly Wait = '--wait'
     public static readonly HelmTimeoutFlag = '--timeout'
-    public static readonly HelmUninstallTimeout = '90s'
+    public static readonly HelmUninstallTimeout = '60s'
     public static readonly Delete = 'delete'
     public static readonly NamespaceKind = 'namespace'
     public static readonly NamespacesKind = 'namespaces'
     public static readonly WaitTrue = '--wait=true'
     public static readonly IgnoreNotFound = '--ignore-not-found'
-    public static readonly DeleteTimeout = '--timeout=90s'
+    public static readonly DeleteTimeout = '--timeout=60s'
     public static readonly Get = 'get'
     public static readonly SecretKind = 'secret'
     public static readonly Output = '-o'
@@ -67,8 +67,11 @@ export class CustomerCluster
     private static readonly Release = 'pragmatic-engine'
     private static readonly EngineNamespaces = /^(pragmatic-system|pragmatic-idp-[a-z0-9-]+|pragmatic-env-[a-z0-9-]+)$/
     private static readonly NotFound = /not found/i
-    private static readonly StepTimeoutMs = 90_000 + 15_000
-    private static readonly ReadTimeoutMs = 30_000
+    /** Each Reset program's own deadline: helm's and kubectl's 60 s wait plus 10 s to start and answer. */
+    public static readonly StepTimeoutMs = 70_000
+    public static readonly ReadTimeoutMs = 20_000
+    /** What Reset can take at most: uninstall, list, delete (160 s), inside ResetBudgetMs (180 s). */
+    public static readonly ResetTimeoutsMs: readonly number[] = [CustomerCluster.StepTimeoutMs, CustomerCluster.ReadTimeoutMs, CustomerCluster.StepTimeoutMs]
     private static readonly Base64 = 'base64'
     private static readonly Utf8 = 'utf8'
     private static readonly EmailKey = 'email'
@@ -79,7 +82,7 @@ export class CustomerCluster
     private static readonly InstallFailed = 'helm install failed with code '
     private static readonly DeleteFailed = 'deleting the engine namespaces failed with code '
     private static readonly ListFailed = 'listing the namespaces failed with code '
-    private static readonly NoOwner = 'the engine has no readable Owner sign-in yet (Secret pragmatic-owner-initial)'
+    private static readonly Unreadable = 'the engine Secret is not readable JSON: '
     private static readonly NoDevCa = 'the engine has no development CA (Secret pragmatic-tls-dev-ca): was it installed with tls.mode=self-signed?'
 
     public constructor(private readonly runner: IProcessRunner, private readonly clusterName: string, private readonly abort: LegAbort = new LegAbort())
@@ -180,7 +183,7 @@ export class CustomerCluster
         }
         catch
         {
-            throw new Error(C.NoOwner)
+            throw new Error(C.Unreadable + name)
         }
     }
 

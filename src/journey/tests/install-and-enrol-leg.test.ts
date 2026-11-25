@@ -1,6 +1,9 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { JourneyBrowser } from '../drivers/journey-browser.js'
 import { createServer } from 'node:tls'
 import type { AddressInfo } from 'node:net'
 import { CabinetHivesPage } from '../drivers/cabinet-hives-page.js'
@@ -406,13 +409,69 @@ describe('NodeProcessRunner', () =>
 {
     it('an aborted signal kills the program and the call settles only after it exited', async () =>
     {
-        const controller = new AbortController()
-        const started = Date.now()
-        const running = new NodeProcessRunner().Run(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], 120_000, controller.signal)
-        setTimeout(() => controller.abort(), 200)
-        const result = await running
-        assert.notEqual(result.Code, 0)
-        assert.ok(Date.now() - started < 30_000, 'it did not run to its end')
+        const folder = mkdtempSync(join(tmpdir(), 'runner-'))
+        const pidFile = join(folder, 'pid')
+        try
+        {
+            const controller = new AbortController()
+            const started = Date.now()
+            const script = 'require("fs").writeFileSync(process.argv[1], String(process.pid)); setTimeout(() => {}, 60000)'
+            const running = new NodeProcessRunner().Run(process.execPath, ['-e', script, pidFile], 120_000, controller.signal)
+            while (!existsSync(pidFile))
+            {
+                await new Promise(resolve => setTimeout(resolve, 20))
+            }
+            controller.abort()
+            const result = await running
+            assert.notEqual(result.Code, 0)
+            assert.ok(Date.now() - started < 30_000, 'it did not run to its end')
+            const pid = Number(readFileSync(pidFile, 'utf8'))
+            assert.throws(() => process.kill(pid, 0), 'the child is gone when the call settles')
+        }
+        finally
+        {
+            rmSync(folder, { recursive: true, force: true })
+        }
+    })
+})
+
+describe('the journey browser and the cluster reset', () =>
+{
+    it('a reset browser shows its screenshots again', async () =>
+    {
+        const evidence = new TestEvidence()
+        const browser = new JourneyBrowser(evidence.Evidence, false)
+        browser.HideScreenshots(true)
+        await browser.Reset()
+        assert.equal(browser.ScreenshotsHidden, false)
+        const fake = new FakeBrowser()
+        fake.HideScreenshots(true)
+        await fake.Reset()
+        assert.equal(fake.ScreenshotsHidden, false)
+        evidence.Folder.Dispose()
+    })
+
+    it('Reset\'s program deadlines fit inside its budget', () =>
+    {
+        assert.ok(CustomerCluster.ResetTimeoutsMs.reduce((sum, ms) => sum + ms, 0) <= CustomerCluster.ResetBudgetMs)
+    })
+
+    it('an unreadable Secret is named as such, not as a missing Owner sign-in', async () =>
+    {
+        const runner: IProcessRunner = { Run: async () => new ProcessResult(0, 'not json', '') }
+        await assert.rejects(new CustomerCluster(runner, 'pragmatic-customer').DevCa(), /the engine Secret is not readable JSON: pragmatic-tls-dev-ca/)
+    })
+
+    it('a clean whose leave and reset both fail reports both', async () =>
+    {
+        const world = new LegWorld(JourneyPath.Enrolled)
+        const leg = world.Leg()
+        await leg.Run(world.Context)
+        world.Browser.Current.ClickTextNear = async (): Promise<void> => { throw new Error('the cabinet is down') }
+        const run = world.Runner.Run.bind(world.Runner)
+        world.Runner.Run = async (program, argv, timeoutMs, signal) => argv.includes('uninstall') ? new ProcessResult(2, '', 'boom') : run(program, argv, timeoutMs, signal)
+        await assert.rejects(leg.Clean(world.Context), (error: unknown) => error instanceof AggregateError && error.errors.length === 2 && /the cabinet is down/.test(error.message) && /helm uninstall failed/.test(error.message))
+        world.Evidence.Folder.Dispose()
     })
 })
 

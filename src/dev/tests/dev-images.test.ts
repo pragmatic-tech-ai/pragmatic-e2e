@@ -105,6 +105,7 @@ describe('DevImages.BakeCommands', () =>
             [ReleaseApp.TenantIdp, 'pragmatic-tenant-idp:dev'],
             [ReleaseApp.UiUnpack, 'pragmatic-ui-unpack:dev'],
             [ReleaseApp.Postgres, 'pragmatic-postgres:local'],
+            [ReleaseApp.HostAgent, 'pragmatic-host-agent:dev'],
         ])
         for (const app of ReleaseApps.All)
         {

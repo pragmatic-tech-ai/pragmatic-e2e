@@ -78,6 +78,8 @@ export class InstallAndEnrolLeg implements IJourneyLeg
     private static readonly TwoIntents = 'the engine console lists the change more than once (a second intent): '
     private static readonly LeftShown = 'left the hive in the cabinet: '
     private static readonly NoHive = 'no hive of the run is left to leave'
+    private static readonly CleanFailed = 'leaving the hive and resetting the cluster both failed: '
+    private static readonly FailureSeparator = '; '
     private static readonly ResetAfter = 'reset the proof cluster after the run (removed: '
 
     public constructor(
@@ -171,16 +173,35 @@ export class InstallAndEnrolLeg implements IJourneyLeg
     public async Clean(context: JourneyContext): Promise<void>
     {
         const L = InstallAndEnrolLeg
+        const reset = context.Get(JourneyKeys.HiveState) !== undefined
+        const failures: unknown[] = []
         try
         {
             await this.LeaveAll(context)
         }
-        finally
+        catch (error)
         {
-            if (context.Get(JourneyKeys.HiveState) !== undefined)
+            failures.push(error)
+        }
+        // The cluster reset runs whether leaving worked or not; when both fail, both are reported.
+        if (reset)
+        {
+            try
             {
                 this.evidence.Step(this.Name, L.ResetAfter + L.Names(await this.cluster.Reset()) + L.Close)
             }
+            catch (error)
+            {
+                failures.push(error)
+            }
+        }
+        if (failures.length === 1)
+        {
+            throw failures[0]
+        }
+        if (failures.length > 1)
+        {
+            throw new AggregateError(failures, L.CleanFailed + failures.map(failure => failure instanceof Error ? failure.message : String(failure)).join(L.FailureSeparator))
         }
     }
 
