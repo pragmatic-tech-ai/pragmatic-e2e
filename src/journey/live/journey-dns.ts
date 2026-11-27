@@ -12,13 +12,46 @@ export class ForeignZoneError extends Error
     }
 }
 
+/** What the domain leg needs of the journey's DNS: write and delete its TXT records. */
+export interface IJourneyDns
+{
+    UpsertTxt(name: string, value: string): Promise<void>
+    DeleteTxt(name: string): Promise<number>
+}
+
+/** The journey's DNS built on first use: the leg is wired before its token file is needed (a pending leg never asks). */
+export class LazyJourneyDns implements IJourneyDns
+{
+    private dns: JourneyDns | undefined
+
+    public constructor(private readonly config: JourneyConfig)
+    {
+    }
+
+    public UpsertTxt(name: string, value: string): Promise<void>
+    {
+        return this.Dns().UpsertTxt(name, value)
+    }
+
+    public DeleteTxt(name: string): Promise<number>
+    {
+        return this.Dns().DeleteTxt(name)
+    }
+
+    private Dns(): JourneyDns
+    {
+        this.dns ??= JourneyDns.For(this.config)
+        return this.dns
+    }
+}
+
 /**
  * TXT records for the journey's verified email domains (`<run>.journey.pragmatic-lab.com`), through the Cloudflare API
  * with the test-only DNS token (DNS Write on `pragmatic-lab.com` only). The zone is fixed here, not configured; the
  * configured subdomain must lie under it, and any name not under the subdomain is refused before a request is made,
  * so the class can never touch another zone or another of that zone's names.
  */
-export class JourneyDns
+export class JourneyDns implements IJourneyDns
 {
     public static readonly Zone = 'pragmatic-lab.com'
     private static readonly Api = 'https://api.cloudflare.com/client/v4/zones'

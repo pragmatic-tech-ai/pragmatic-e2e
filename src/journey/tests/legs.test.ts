@@ -12,6 +12,7 @@ import { JourneyDependency } from '../journey-dependency.js'
 import { JourneyPath } from '../journey-path.js'
 import { JourneyKeys, JourneyLegName, JourneyState } from '../legs/journey-keys.js'
 import { JourneyLegInputs, JourneyLegs } from '../legs/journey-legs.js'
+import { DomainLeg } from '../legs/domain-leg.js'
 import { PayLeg } from '../legs/pay-leg.js'
 import { PendingLeg } from '../legs/pending-leg.js'
 import { RegisterLeg, type IUncleanedRuns } from '../legs/register-leg.js'
@@ -777,6 +778,9 @@ describe('JourneyLegs', () =>
         const tenant = JourneyLegs.For(JourneyPath.Enrolled, inputs)[3]
         assert.ok(tenant instanceof TenantLeg, 'the tenant leg is built')
         assert.ok(!(tenant instanceof PendingLeg))
+        const domain = JourneyLegs.For(JourneyPath.Enrolled, inputs)[5]
+        assert.ok(domain instanceof DomainLeg, 'the domain leg is built (its DNS token is read only when it runs)')
+        assert.deepEqual(domain.Dependencies, [JourneyDependency.EntitlementDelivery, JourneyDependency.JourneyDns])
         assert.deepEqual(tenant.Dependencies, [JourneyDependency.Cabinet, JourneyDependency.CentralLogin, JourneyDependency.EntitlementDelivery])
         for (const leg of JourneyLegs.For(JourneyPath.Delegated, inputs).slice(3))
         {
@@ -813,6 +817,6 @@ describe('JourneyConfig', () =>
         assert.equal(config.CentralIssuer, 'https://login.pragmatic-tech.ai/realms/central')
         assert.ok(config.LiveDependencies.has(JourneyDependency.JourneyMail))
         assert.ok(config.LiveDependencies.has(JourneyDependency.EntitlementDelivery), 'D4\'s delivery is live (2026-11-23)')
-        assert.ok(!config.LiveDependencies.has(JourneyDependency.JourneyDns), 'the journey DNS token is not minted yet')
+        assert.ok(config.LiveDependencies.has(JourneyDependency.JourneyDns), 'the journey DNS token is minted and placed')
     })
 })

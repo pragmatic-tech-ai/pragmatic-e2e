@@ -42,6 +42,12 @@ export interface IJourneyPage
     Hrefs(): Promise<string[]>
     Frame(host: string): IJourneyFrame | undefined
     ScreenshotPage(): IScreenshotPage
+    /**
+     * POSTs a JSON body to a same-origin `path` from inside the page, so the request carries the page's own session
+     * (the customer's cabinet cookies); returns the parsed JSON answer (an empty body is null). Throws with the status
+     * and body on a non-2xx answer. Used to drive customer-API operations the cabinet UI does not surface for a level.
+     */
+    PostJson(path: string, body: unknown): Promise<unknown>
 }
 
 export class PlaywrightJourneyFrame implements IJourneyFrame
@@ -291,6 +297,20 @@ export class PlaywrightJourneyPage implements IJourneyPage
                 await page.screenshot({ path, fullPage: true, timeout: timeoutMs, animations: PlaywrightJourneyPage.NoAnimations, caret: PlaywrightJourneyPage.HiddenCaret })
             },
         }
+    }
+
+    public PostJson(path: string, body: unknown): Promise<unknown>
+    {
+        return this.page.evaluate(async (input: { Path: string, Body: unknown }) =>
+        {
+            const response = await fetch(input.Path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input.Body), credentials: 'same-origin' })
+            const text = await response.text()
+            if (!response.ok)
+            {
+                throw new Error('HTTP ' + response.status + ' ' + input.Path + ': ' + text)
+            }
+            return text.length === 0 ? null : JSON.parse(text)
+        }, { Path: path, Body: body })
     }
 
     /**

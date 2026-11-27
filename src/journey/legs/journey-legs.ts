@@ -1,3 +1,4 @@
+import { CabinetDomainsPage } from '../drivers/cabinet-domains-page.js'
 import { CabinetHivesPage } from '../drivers/cabinet-hives-page.js'
 import { CabinetPage } from '../drivers/cabinet-page.js'
 import { CabinetTenantsPage } from '../drivers/cabinet-tenants-page.js'
@@ -17,8 +18,11 @@ import { CustomerCluster } from '../live/customer-cluster.js'
 import type { JourneyIdentity } from '../live/journey-identity.js'
 import { NodeProcessRunner, type IProcessRunner } from '../live/process-runner.js'
 import { LegAbort, type Waiter } from '../waiter.js'
+import { LazyJourneyDns } from '../live/journey-dns.js'
+import { DomainLeg } from './domain-leg.js'
 import { JourneyLegName } from './journey-keys.js'
 import { InstallAndEnrolLeg } from './install-and-enrol-leg.js'
+import { PlaceHostedLeg } from './place-hosted-leg.js'
 import { PayLeg } from './pay-leg.js'
 import { PendingLeg } from './pending-leg.js'
 import { RegisterLeg, type IUncleanedRuns } from './register-leg.js'
@@ -60,7 +64,7 @@ export class JourneyLegs
         const login = new CentralLoginPage(loginHost, inputs.Waiter)
         const session = new CustomerSession(inputs.Browser, cabinet, login, inputs.Identity, loginHost, inputs.Waiter)
         const hive = path === JourneyPath.Hosted
-            ? new PendingLeg(N.PlaceHosted, [D.EntitlementDelivery, D.HostedPlacement])
+            ? new PlaceHostedLeg(session, inputs.Runner, inputs.Waiter, inputs.Evidence)
             : new InstallAndEnrolLeg(inputs.Browser, new CabinetHivesPage(session, cabinet, inputs.Browser, inputs.Waiter), new CustomerCluster(inputs.Runner, config.CustomerCluster, inputs.Abort), inputs.Trust, inputs.Waiter, inputs.Evidence)
         const hiveDependency = path === JourneyPath.Hosted ? D.HostedPlacement : D.CustomerCluster
         return [
@@ -69,7 +73,7 @@ export class JourneyLegs
             new PayLeg(session, cabinet, new PaddleCheckout(inputs.Waiter), inputs.Identity, config.PlanName, inputs.Waiter, inputs.Evidence),
             new TenantLeg(new CabinetTenantsPage(session, cabinet, inputs.Waiter), inputs.Evidence),
             hive,
-            new PendingLeg(N.Domain, [D.EntitlementDelivery, D.JourneyDns]),
+            new DomainLeg(new CabinetDomainsPage(session, cabinet, inputs.Waiter), new LazyJourneyDns(config), inputs.Evidence),
             new PendingLeg(N.StaffSignIn, [D.EntitlementDelivery, hiveDependency, D.TenantRealm]),
             new PendingLeg(N.Plexus, [D.EntitlementDelivery, hiveDependency, D.PlexusRealmSignIn]),
             new PendingLeg(N.DeployGraphs, [D.EntitlementDelivery, hiveDependency, D.PlexusRealmSignIn]),
