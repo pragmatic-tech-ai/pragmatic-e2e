@@ -21,6 +21,8 @@ export class JourneyKeys
     public static readonly DomainState = 'domainState'
     public static readonly Environment = 'environment'
     public static readonly EnvironmentState = 'environmentState'
+    public static readonly StaffEmail = 'staffEmail'
+    public static readonly StaffState = 'staffState'
 }
 
 /** The values the state keys take. */
@@ -43,6 +45,9 @@ export enum JourneyState
     ConsoleTrusted = 'verified',
     DomainChallenged = 'challenged',
     DomainVerified = 'domain-verified',
+    StaffCreated = 'staff-created',
+    StaffSignedIn = 'staff-signed-in',
+    StaffDisabled = 'staff-disabled',
 }
 
 /** The leg names, in run order (the report's rows and the context's started/completed lists). */

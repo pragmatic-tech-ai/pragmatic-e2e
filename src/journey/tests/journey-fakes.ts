@@ -254,6 +254,9 @@ export class FakeBrowser implements IJourneyBrowser, ILegSupervisor
 {
     public readonly Current = new FakePage()
     public readonly Console = new FakePage()
+    /** The page a fresh console browser context opens (the staff user's). */
+    public readonly Fresh = new FakePage()
+    public readonly FreshPins: string[][] = []
     public Resets = 0
     public Closed = 0
 
@@ -287,6 +290,12 @@ export class FakeBrowser implements IJourneyBrowser, ILegSupervisor
     {
         this.ConsolePins.push([...trustedSpki])
         return this.Console
+    }
+
+    public async FreshConsolePage(trustedSpki: readonly string[]): Promise<IJourneyPage>
+    {
+        this.FreshPins.push([...trustedSpki])
+        return this.Fresh
     }
 
     public HideScreenshots(hidden: boolean): void

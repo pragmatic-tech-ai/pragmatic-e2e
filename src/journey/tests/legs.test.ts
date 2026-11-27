@@ -13,6 +13,7 @@ import { JourneyPath } from '../journey-path.js'
 import { JourneyKeys, JourneyLegName, JourneyState } from '../legs/journey-keys.js'
 import { JourneyLegInputs, JourneyLegs } from '../legs/journey-legs.js'
 import { DomainLeg } from '../legs/domain-leg.js'
+import { StaffSignInLeg } from '../legs/staff-sign-in-leg.js'
 import { PayLeg } from '../legs/pay-leg.js'
 import { PendingLeg } from '../legs/pending-leg.js'
 import { RegisterLeg, type IUncleanedRuns } from '../legs/register-leg.js'
@@ -781,6 +782,13 @@ describe('JourneyLegs', () =>
         const domain = JourneyLegs.For(JourneyPath.Enrolled, inputs)[5]
         assert.ok(domain instanceof DomainLeg, 'the domain leg is built (its DNS token is read only when it runs)')
         assert.deepEqual(domain.Dependencies, [JourneyDependency.EntitlementDelivery, JourneyDependency.JourneyDns])
+        const D = JourneyDependency
+        const enrolledStaff = JourneyLegs.For(JourneyPath.Enrolled, inputs)[6]
+        assert.ok(enrolledStaff instanceof StaffSignInLeg, 'the staff sign-in leg is built')
+        assert.deepEqual(enrolledStaff.Dependencies, [D.EntitlementDelivery, D.CustomerCluster, D.TenantRealm])
+        const hostedStaff = JourneyLegs.For(JourneyPath.Hosted, inputs)[6]
+        assert.ok(hostedStaff instanceof StaffSignInLeg, 'the staff sign-in leg is built on the Hosted path too')
+        assert.deepEqual(hostedStaff.Dependencies, [D.EntitlementDelivery, D.HostedPlacement, D.TenantRealm])
         assert.deepEqual(tenant.Dependencies, [JourneyDependency.Cabinet, JourneyDependency.CentralLogin, JourneyDependency.EntitlementDelivery])
         for (const leg of JourneyLegs.For(JourneyPath.Delegated, inputs).slice(3))
         {

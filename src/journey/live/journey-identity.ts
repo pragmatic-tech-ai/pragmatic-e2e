@@ -14,6 +14,7 @@ export class JourneyIdentity
     private static readonly Hmac = 'sha256'
     private static readonly Base64Url = 'base64url'
     private static readonly Purpose = 'pragmatic-journey/customer-password/v1:'
+    private static readonly StaffPurpose = 'pragmatic-journey/staff-password/v1:'
     // Identity Platform's policy and the login page ask for a mix; the suffix guarantees one of each class.
     private static readonly ClassSuffix = 'aA1!'
     private static readonly PasswordBodyLength = 24
@@ -23,6 +24,8 @@ export class JourneyIdentity
     public readonly Email: string
     public readonly Password: string
 
+    private readonly seed: string
+
     public constructor(public readonly Path: JourneyPath, emailDomain: string, seed: string)
     {
         const J = JourneyIdentity
@@ -30,8 +33,25 @@ export class JourneyIdentity
         {
             throw new Error(J.SeedTooShort)
         }
+        this.seed = seed
         this.Email = J.LocalPrefix + Path + J.At + emailDomain
-        const body = createHmac(J.Hmac, seed).update(J.Purpose + this.Email).digest(J.Base64Url).slice(0, J.PasswordBodyLength)
-        this.Password = body + J.ClassSuffix
+        this.Password = J.Derive(seed, J.Purpose, this.Email)
+    }
+
+    /**
+     * The password of the run's staff account `email`, derived as the customer's is (HMAC-SHA256 over a purpose of its own
+     * and the address): a later leg derives it again, so no leg stores it.
+     */
+    public StaffPassword(email: string): string
+    {
+        const J = JourneyIdentity
+        return J.Derive(this.seed, J.StaffPurpose, email)
+    }
+
+    private static Derive(seed: string, purpose: string, email: string): string
+    {
+        const J = JourneyIdentity
+        const body = createHmac(J.Hmac, seed).update(purpose + email).digest(J.Base64Url).slice(0, J.PasswordBodyLength)
+        return body + J.ClassSuffix
     }
 }

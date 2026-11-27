@@ -16,6 +16,11 @@ export interface IJourneyBrowser
      */
     ConsolePage(trustedSpki: readonly string[]): Promise<IJourneyPage>
     /**
+     * A page in a fresh browser context of the console's browser (no cookies, no SSO session of the Owner's page), trusting
+     * the same `trustedSpki`: a second person signing in to the same engine.
+     */
+    FreshConsolePage(trustedSpki: readonly string[]): Promise<IJourneyPage>
+    /**
      * While hidden, no failure screenshot is taken: the page may show a one-time code or an install command
      * (CabinetHivesPage hides it from pressing Start until it navigated away).
      */
@@ -70,17 +75,38 @@ export class JourneyBrowser implements IJourneyBrowser, ILegSupervisor
 
     public async ConsolePage(trustedSpki: readonly string[]): Promise<IJourneyPage>
     {
-        const J = JourneyBrowser
         this.abort.Check()
         if (this.consolePage === undefined)
+        {
+            const browser = await this.ConsoleBrowser(trustedSpki)
+            this.consolePage = new PlaywrightJourneyPage(await (await this.NewContext(browser)).newPage())
+        }
+        return this.consolePage
+    }
+
+    public async FreshConsolePage(trustedSpki: readonly string[]): Promise<IJourneyPage>
+    {
+        this.abort.Check()
+        const browser = await this.ConsoleBrowser(trustedSpki)
+        return new PlaywrightJourneyPage(await (await this.NewContext(browser)).newPage())
+    }
+
+    private async ConsoleBrowser(trustedSpki: readonly string[]): Promise<Browser>
+    {
+        const J = JourneyBrowser
+        if (this.consoleBrowser === undefined)
         {
             // Chromium accepts a certificate whose key is pinned here even though no public root issued it; certificate
             // errors stay errors for every other key (no ignoreHTTPSErrors).
             this.consoleBrowser = await chromium.launch({ headless: !this.headed, channel: J.Channel, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false, args: [J.SpkiListFlag + trustedSpki.join(J.SpkiSeparator)] })
-            const context = await this.consoleBrowser.newContext({ locale: J.Locale, viewport: { width: J.ViewportWidth, height: J.ViewportHeight } })
-            this.consolePage = new PlaywrightJourneyPage(await context.newPage())
         }
-        return this.consolePage
+        return this.consoleBrowser
+    }
+
+    private NewContext(browser: Browser): Promise<BrowserContext>
+    {
+        const J = JourneyBrowser
+        return browser.newContext({ locale: J.Locale, viewport: { width: J.ViewportWidth, height: J.ViewportHeight } })
     }
 
     public HideScreenshots(hidden: boolean): void

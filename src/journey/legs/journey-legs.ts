@@ -25,6 +25,7 @@ import { InstallAndEnrolLeg } from './install-and-enrol-leg.js'
 import { PlaceHostedLeg } from './place-hosted-leg.js'
 import { PayLeg } from './pay-leg.js'
 import { PendingLeg } from './pending-leg.js'
+import { StaffSignInLeg } from './staff-sign-in-leg.js'
 import { RegisterLeg, type IUncleanedRuns } from './register-leg.js'
 import { TenantLeg } from './tenant-leg.js'
 import { VisitLeg } from './visit-leg.js'
@@ -74,7 +75,7 @@ export class JourneyLegs
             new TenantLeg(new CabinetTenantsPage(session, cabinet, inputs.Waiter), inputs.Evidence),
             hive,
             new DomainLeg(new CabinetDomainsPage(session, cabinet, inputs.Waiter), new LazyJourneyDns(config), inputs.Evidence),
-            new PendingLeg(N.StaffSignIn, [D.EntitlementDelivery, hiveDependency, D.TenantRealm]),
+            new StaffSignInLeg(inputs.Browser, new CustomerCluster(inputs.Runner, config.CustomerCluster, inputs.Abort), inputs.Trust, inputs.Identity, inputs.Waiter, inputs.Evidence, hiveDependency),
             new PendingLeg(N.Plexus, [D.EntitlementDelivery, hiveDependency, D.PlexusRealmSignIn]),
             new PendingLeg(N.DeployGraphs, [D.EntitlementDelivery, hiveDependency, D.PlexusRealmSignIn]),
         ]

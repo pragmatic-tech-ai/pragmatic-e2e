@@ -1,0 +1,319 @@
+import { describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { EngineConsolePage } from '../drivers/engine-console-page.js'
+import { TenantConsolePage } from '../drivers/tenant-console-page.js'
+import { JourneyContext } from '../journey-context.js'
+import { JourneyDependency } from '../journey-dependency.js'
+import { JourneyPath } from '../journey-path.js'
+import { JourneyKeys, JourneyLegName, JourneyState } from '../legs/journey-keys.js'
+import { StaffSignInLeg } from '../legs/staff-sign-in-leg.js'
+import type { IConsoleTrust } from '../live/console-trust.js'
+import { CustomerCluster } from '../live/customer-cluster.js'
+import { JourneyIdentity } from '../live/journey-identity.js'
+import { ProcessResult, type IProcessRunner } from '../live/process-runner.js'
+import { Waiter } from '../waiter.js'
+import { FakeBrowser, FakeClock, TestEvidence } from './journey-fakes.js'
+
+const RunId = 'run-0001'
+const Tenant = 'journey-run-0001-e'
+const ConsoleHost = 'console-' + Tenant + '.localtest.me'
+const IdpHost = 'idp-' + Tenant + '.localtest.me'
+const ConsoleUrl = 'https://' + ConsoleHost + ':28443/'
+const Environment = 'journey'
+const OwnerEmail = 'owner@localtest.me'
+const OwnerPassword = 'Initial-Owner-Password-0123456789'
+const StaffEmail = 'staff@' + RunId + '.journey.pragmatic-lab.com'
+const Seed = 's'.repeat(40)
+
+/** kubectl, standing in: the engine's Owner Secret and development CA. */
+class FakeKubectl implements IProcessRunner
+{
+    public async Run(_program: string, argv: readonly string[], _timeoutMs: number): Promise<ProcessResult>
+    {
+        if (argv.includes(CustomerCluster.OwnerSecret))
+        {
+            const data = { email: Buffer.from(OwnerEmail).toString('base64'), password: Buffer.from(OwnerPassword).toString('base64') }
+            return new ProcessResult(0, JSON.stringify({ data }), '')
+        }
+        if (argv.includes(CustomerCluster.DevCaSecret))
+        {
+            return new ProcessResult(0, JSON.stringify({ data: { 'ca.crt': Buffer.from('PEM').toString('base64') } }), '')
+        }
+        return new ProcessResult(1, '', 'unexpected')
+    }
+}
+
+class FakeTrust implements IConsoleTrust
+{
+    public async Pins(hosts: readonly string[], _port: number, _caPem: string): Promise<string[]>
+    {
+        return hosts.map(host => 'pin-' + host)
+    }
+}
+
+/** The engine console behind two pages: the Owner's and the staff user's fresh context. */
+class StaffWorld
+{
+    public readonly Browser = new FakeBrowser()
+    public readonly Owner = this.Browser.Console
+    public readonly Staff = this.Browser.Fresh
+    public readonly Evidence = new TestEvidence()
+    public readonly Clock = new FakeClock()
+    public readonly Waiter = new Waiter(this.Clock, 1000)
+    public readonly Identity = new JourneyIdentity(JourneyPath.Enrolled, 'pragmatic-lab.com', Seed)
+    public readonly Cluster = new CustomerCluster(new FakeKubectl(), 'pragmatic-customer')
+    public readonly Context: JourneyContext
+    public readonly ExpectedPassword = this.Identity.StaffPassword(StaffEmail)
+    /** Whether the realm offers local accounts (the dialog says so). */
+    public LocalAccounts = true
+    public Created = false
+    public Granted = false
+    public Disabled = false
+    public DialogOpen = false
+    public Creates = 0
+    public Disables = 0
+    public EnvironmentPicked = false
+
+    public constructor(public readonly Path: JourneyPath = JourneyPath.Enrolled)
+    {
+        this.Context = new JourneyContext(RunId, Path)
+        this.Context.Set(JourneyKeys.ConsoleUrl, ConsoleUrl)
+        this.Context.Set(JourneyKeys.ConsoleHost, ConsoleHost)
+        this.Context.Set(JourneyKeys.IdpHost, IdpHost)
+        this.Context.Set(JourneyKeys.Environment, Environment)
+        this.WireOwner()
+        this.WireStaff()
+    }
+
+    public Leg(): StaffSignInLeg
+    {
+        const dependency = this.Path === JourneyPath.Hosted ? JourneyDependency.HostedPlacement : JourneyDependency.CustomerCluster
+        return new StaffSignInLeg(this.Browser, this.Cluster, new FakeTrust(), this.Identity, this.Waiter, this.Evidence.Evidence, dependency)
+    }
+
+    private WireOwner(): void
+    {
+        const T = TenantConsolePage
+        const E = EngineConsolePage
+        this.Owner.OnGoto.set(ConsoleUrl, () => this.Owner.Show(ConsoleUrl, [E.SignInButton], [[E.EmailSelector, 1], [E.PasswordSelector, 1]]))
+        this.Owner.OnClick.set(E.SignInButton, () => this.Owner.Show(ConsoleUrl, [E.OverviewConnection, T.NavLabel]))
+        this.Owner.OnClick.set(T.NavLabel, () => this.ShowUsers())
+        this.Owner.OnClick.set(T.EnvironmentPlaceholder, () => this.Owner.Texts.add(Environment))
+        this.Owner.OnClick.set(Environment, () =>
+        {
+            this.EnvironmentPicked = true
+            this.ShowUsers()
+        })
+        this.Owner.OnClick.set(T.CreateAccountLabel, () => this.CreateClicked())
+        this.Owner.OnClick.set(StaffEmail, () => this.ShowDetail())
+        this.Owner.OnClick.set(T.ViewerRole, () => this.Owner.Texts.add(T.AdminRole))
+        this.Owner.OnClick.set(T.GrantButton, () =>
+        {
+            this.Granted = true
+            this.ShowDetail()
+        })
+        this.Owner.OnClick.set(T.DisableLabel, () => this.DisableClicked())
+    }
+
+    private WireStaff(): void
+    {
+        const E = EngineConsolePage
+        this.Staff.OnGoto.set(ConsoleUrl, () => this.Staff.Show(ConsoleUrl, [E.SignInButton], [[E.EmailSelector, 1], [E.PasswordSelector, 1]]))
+        this.Staff.OnClick.set(E.SignInButton, () =>
+        {
+            const filledEmail = this.Staff.Calls.includes('fill ' + E.EmailSelector + '#0 ' + StaffEmail)
+            const filledPassword = this.Staff.Calls.includes('fill ' + E.PasswordSelector + '#0 ' + this.ExpectedPassword)
+            if (this.Created && this.Granted && !this.Disabled && filledEmail && filledPassword)
+            {
+                this.Staff.Show(ConsoleUrl, [E.OverviewConnection])
+            }
+        })
+    }
+
+    private ShowUsers(): void
+    {
+        const T = TenantConsolePage
+        const texts: string[] = [T.NavLabel, T.CreateAccountLabel, T.UsersTab, this.EnvironmentPicked ? Environment : T.EnvironmentPlaceholder]
+        if (this.Created)
+        {
+            texts.push(StaffEmail)
+        }
+        this.Owner.Show(ConsoleUrl, texts)
+    }
+
+    private CreateClicked(): void
+    {
+        const T = TenantConsolePage
+        if (!this.DialogOpen)
+        {
+            this.DialogOpen = true
+            const texts = [...this.Owner.Texts, T.CancelLabel]
+            if (this.LocalAccounts)
+            {
+                texts.push(T.LocalAccountsNotice)
+            }
+            this.Owner.Show(ConsoleUrl, texts, [[T.EmailSelector, 1], [T.PrincipalSelector, 1], [T.PasswordSelector, 1]])
+            return
+        }
+        this.Creates++
+        this.Created = true
+        this.DialogOpen = false
+        this.ShowUsers()
+    }
+
+    private ShowDetail(): void
+    {
+        const T = TenantConsolePage
+        const texts = [StaffEmail, T.GrantRoleCaption, T.ViewerRole, T.GrantButton, this.Disabled ? T.DisabledStatus : T.ActiveStatus, T.DisableLabel]
+        texts.push(this.Granted ? T.AdminRole : T.NoGrantsText)
+        this.Owner.Show(ConsoleUrl, texts)
+    }
+
+    private DisableClicked(): void
+    {
+        const T = TenantConsolePage
+        if (!this.Owner.Texts.has(T.CancelLabel))
+        {
+            this.Owner.Texts.add(T.CancelLabel)
+            return
+        }
+        this.Disables++
+        this.Disabled = true
+        this.ShowDetail()
+    }
+}
+
+describe('StaffSignInLeg', () =>
+{
+    it('creates the staff account, grants Admin and signs the staff user in through the realm in a fresh browser context', async () =>
+    {
+        const w = new StaffWorld()
+        await w.Leg().Run(w.Context)
+        const E = EngineConsolePage
+        const T = TenantConsolePage
+        assert.equal(w.Creates, 1)
+        assert.ok(w.Granted)
+        assert.equal(w.Context.Get(JourneyKeys.StaffEmail), StaffEmail)
+        assert.equal(w.Context.Get(JourneyKeys.StaffState), JourneyState.StaffSignedIn)
+        // The Owner signed in with the engine's initial sign-in (no password change is asked for it).
+        assert.ok(w.Owner.Calls.includes('fill ' + E.PasswordSelector + '#0 ' + OwnerPassword))
+        // The account was created with the derived password, through the dialog's own boxes.
+        assert.ok(w.Owner.Calls.includes('fill ' + T.EmailSelector + '#0 ' + StaffEmail))
+        assert.ok(w.Owner.Calls.includes('fill ' + T.PasswordSelector + '#0 ' + w.ExpectedPassword))
+        assert.ok(w.Owner.Calls.includes('click ' + T.AdminRole))
+        assert.ok(w.EnvironmentPicked)
+        // The staff user signed in on its own fresh context, not the Owner's page.
+        assert.deepEqual(w.Browser.FreshPins, [['pin-' + ConsoleHost, 'pin-' + IdpHost]])
+        assert.ok(w.Staff.Calls.includes('fill ' + E.PasswordSelector + '#0 ' + w.ExpectedPassword))
+        assert.ok(w.Staff.Texts.has(E.OverviewConnection))
+        const steps = w.Evidence.Sink.Lines.join('\n')
+        assert.match(steps, /local/i)
+        assert.ok(!steps.includes(w.ExpectedPassword) && !steps.includes(OwnerPassword))
+        assert.ok(!JSON.stringify(w.Context).includes(w.ExpectedPassword))
+        w.Evidence.Folder.Dispose()
+    })
+
+    it('records the address before creating, and refuses a realm that offers no local accounts', async () =>
+    {
+        const w = new StaffWorld()
+        w.LocalAccounts = false
+        await assert.rejects(() => w.Leg().Run(w.Context), /timed out/)
+        assert.equal(w.Context.Get(JourneyKeys.StaffEmail), StaffEmail)
+        assert.equal(w.Creates, 0)
+        assert.equal(w.Context.Get(JourneyKeys.StaffState), undefined)
+        w.Evidence.Folder.Dispose()
+    })
+
+    it('resumes: a staff account already listed is not created again', async () =>
+    {
+        const w = new StaffWorld()
+        w.Created = true
+        await w.Leg().Run(w.Context)
+        assert.equal(w.Creates, 0)
+        assert.ok(w.Granted)
+        assert.equal(w.Context.Get(JourneyKeys.StaffState), JourneyState.StaffSignedIn)
+        w.Evidence.Folder.Dispose()
+    })
+
+    it('does not grant twice when Admin is already granted', async () =>
+    {
+        const w = new StaffWorld()
+        w.Created = true
+        w.Granted = true
+        await w.Leg().Run(w.Context)
+        assert.ok(!w.Owner.Calls.includes('click ' + TenantConsolePage.GrantButton))
+        w.Evidence.Folder.Dispose()
+    })
+
+    it('fails when the realm does not authenticate the staff user', async () =>
+    {
+        const w = new StaffWorld()
+        w.Staff.OnClick.set(EngineConsolePage.SignInButton, () => undefined)
+        await assert.rejects(() => w.Leg().Run(w.Context), /timed out/)
+        assert.notEqual(w.Context.Get(JourneyKeys.StaffState), JourneyState.StaffSignedIn)
+        w.Evidence.Folder.Dispose()
+    })
+
+    it('declares the path\'s dependencies', () =>
+    {
+        const D = JourneyDependency
+        const enrolled = new StaffWorld(JourneyPath.Enrolled)
+        const hosted = new StaffWorld(JourneyPath.Hosted)
+        assert.equal(enrolled.Leg().Name, JourneyLegName.StaffSignIn)
+        assert.deepEqual(enrolled.Leg().Dependencies, [D.EntitlementDelivery, D.CustomerCluster, D.TenantRealm])
+        assert.deepEqual(hosted.Leg().Dependencies, [D.EntitlementDelivery, D.HostedPlacement, D.TenantRealm])
+        enrolled.Evidence.Folder.Dispose()
+        hosted.Evidence.Folder.Dispose()
+    })
+
+    it('Clean disables the staff account from the context alone', async () =>
+    {
+        const w = new StaffWorld()
+        w.Created = true
+        w.Granted = true
+        w.Context.Set(JourneyKeys.StaffEmail, StaffEmail)
+        w.Context.Set(JourneyKeys.StaffState, JourneyState.StaffSignedIn)
+        await w.Leg().Clean(w.Context)
+        assert.equal(w.Disables, 1)
+        assert.ok(w.Disabled)
+        assert.equal(w.Context.Get(JourneyKeys.StaffState), JourneyState.StaffDisabled)
+        w.Evidence.Folder.Dispose()
+    })
+
+    it('Clean has nothing to do when no staff account was recorded, or it is already disabled', async () =>
+    {
+        const w = new StaffWorld()
+        await w.Leg().Clean(w.Context)
+        assert.equal(w.Owner.Calls.length, 0)
+        w.Context.Set(JourneyKeys.StaffEmail, StaffEmail)
+        w.Context.Set(JourneyKeys.StaffState, JourneyState.StaffDisabled)
+        await w.Leg().Clean(w.Context)
+        assert.equal(w.Owner.Calls.length, 0)
+        w.Evidence.Folder.Dispose()
+    })
+
+    it('Clean notes an account that was recorded but never listed', async () =>
+    {
+        const w = new StaffWorld()
+        w.Context.Set(JourneyKeys.StaffEmail, StaffEmail)
+        await w.Leg().Clean(w.Context)
+        assert.equal(w.Disables, 0)
+        assert.ok(w.Evidence.Sink.Lines.some(line => line.includes('not listed')))
+        w.Evidence.Folder.Dispose()
+    })
+})
+
+describe('JourneyIdentity.StaffPassword', () =>
+{
+    it('derives a stable, seed-bound password in the customer password shape, apart from it', () =>
+    {
+        const a = new JourneyIdentity(JourneyPath.Enrolled, 'pragmatic-lab.com', Seed)
+        const b = new JourneyIdentity(JourneyPath.Enrolled, 'pragmatic-lab.com', Seed)
+        const other = new JourneyIdentity(JourneyPath.Enrolled, 'pragmatic-lab.com', 'y'.repeat(40))
+        assert.equal(a.StaffPassword(StaffEmail), b.StaffPassword(StaffEmail))
+        assert.notEqual(a.StaffPassword(StaffEmail), other.StaffPassword(StaffEmail))
+        assert.notEqual(a.StaffPassword(StaffEmail), a.StaffPassword('staff@other.journey.pragmatic-lab.com'))
+        assert.notEqual(a.StaffPassword(a.Email), a.Password)
+        assert.match(a.StaffPassword(StaffEmail), /^[A-Za-z0-9_-]{24}aA1!$/)
+    })
+})
