@@ -14,7 +14,9 @@ import { DomainLeg } from './domain-leg.js'
 import { JourneyKeys, JourneyLegName, JourneyState } from './journey-keys.js'
 
 /**
- * Leg 7: staff sign-in. In the customer's own engine console (pragmatic-tenant-admin's tenant portal, Users & Access) the
+ * Leg 7: staff sign-in. The tenant console's accounts and role grants are scoped to an environment and a fresh install has
+ * none, so the Owner first creates the environment `journey` (as the live loop's owner does; Plexus later publishes to a
+ * pre-existing one) and waits until it runs healthy; the environment's name is recorded before it is created. In the customer's own engine console (pragmatic-tenant-admin's tenant portal, Users & Access) the
  * Owner, signed in with the engine's initial sign-in (the console never asks for a password change), creates the staff
  * account `staff@<run id>.journey.pragmatic-lab.com`, a local account (the Create account dialog says it creates one: the
  * realm has local accounts by default, the console has no toggle), with a password derived from the journey's seed
@@ -22,18 +24,23 @@ import { JourneyKeys, JourneyLegName, JourneyState } from './journey-keys.js'
  * holds every console capability, the environments' included; the Grant a role box offers no narrower one). The staff
  * user then signs in to the tenant's realm in a fresh browser context, which proves the realm authenticates the account.
  * The address is recorded before the account is created, so the clean of a killed run names it. Clean disables the staff
- * account (the console has no account deletion; "Disable account" is its removal of access).
+ * account (the console has no account deletion; "Disable account" is its removal of access). Clean leaves the environment
+ * `journey` in place: deleting it needs a typed confirmation and the hive's own cleanup (the hive legs' Clean, which deletes
+ * the cluster or leaves the hive) tears its namespaces down, so it is torn down with the hive.
  */
 export class StaffSignInLeg implements IJourneyLeg
 {
     public readonly Name = JourneyLegName.StaffSignIn
     public readonly Dependencies: readonly JourneyDependency[]
-    /** Above its waits' sum: two sign-ins (2 min each), the page (2 min), the dialog (30 s), the create and grant (1 min each). */
-    public readonly DeadlineMs = 20 * 60_000
+    /** Above its waits' sum: two sign-ins (2 min each), the environment (10 min), the page (2 min), the dialog (30 s), the create and grant (1 min each). */
+    public readonly DeadlineMs = 30 * 60_000
+    public static readonly Environment = 'journey'
     private static readonly Staff = 'staff@'
     private static readonly PrincipalPrefix = 'staff-'
-    private static readonly NoEnvironment = ''
     private static readonly OwnerSignedIn = 'the Owner signed in to the engine console with the engine\'s initial sign-in'
+    private static readonly EnvironmentCreated = 'created the environment (the Owner creates it; accounts and grants are scoped to one): '
+    private static readonly EnvironmentResumed = 'resumed: the environment is already listed: '
+    private static readonly EnvironmentRunning = 'the environment runs healthy: '
     private static readonly LocalAccounts = 'the console offers local (password) accounts in the tenant realm; created staff account '
     private static readonly WithDerived = ' with the password derived from the journey seed'
     private static readonly Resumed = 'resumed: the staff account is already listed: '
@@ -79,7 +86,13 @@ export class StaffSignInLeg implements IJourneyLeg
         const engine = this.Engine(context)
         await engine.SignIn(owner, () => this.cluster.Owner())
         this.evidence.Step(this.Name, L.OwnerSignedIn)
-        await this.tenantConsole.OpenUsers(owner, context.Get(JourneyKeys.Environment) ?? L.NoEnvironment)
+        // Recorded before it is created, so a killed run's clean names it.
+        context.Set(JourneyKeys.Environment, L.Environment)
+        const createdEnvironment = await this.tenantConsole.EnsureEnvironment(owner, L.Environment)
+        context.Set(JourneyKeys.EnvironmentState, JourneyState.EnvironmentReady)
+        this.evidence.Step(this.Name, (createdEnvironment ? L.EnvironmentCreated : L.EnvironmentResumed) + L.Environment)
+        this.evidence.Step(this.Name, L.EnvironmentRunning + L.Environment)
+        await this.tenantConsole.OpenUsers(owner, L.Environment)
         if (await this.tenantConsole.IsListed(owner, email))
         {
             this.evidence.Step(this.Name, L.Resumed + email)
@@ -122,7 +135,7 @@ export class StaffSignInLeg implements IJourneyLeg
         }
         const owner = await this.browser.ConsolePage(await this.Pins(context))
         await this.Engine(context).SignIn(owner, () => this.cluster.Owner())
-        await this.tenantConsole.OpenUsers(owner, context.Get(JourneyKeys.Environment) ?? L.NoEnvironment)
+        await this.tenantConsole.OpenUsers(owner, context.Get(JourneyKeys.Environment) ?? L.Environment)
         if (!await this.tenantConsole.IsListed(owner, email))
         {
             this.evidence.Step(this.Name, L.NotListed + email)

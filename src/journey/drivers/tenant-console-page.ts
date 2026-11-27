@@ -29,10 +29,22 @@ export class TenantConsolePage
     public static readonly DisableLabel = 'Disable account'
     public static readonly ActiveStatus = 'Active'
     public static readonly DisabledStatus = 'Disabled'
+    public static readonly EnvironmentsNav = 'Environments'
+    public static readonly CreateEnvironmentLabel = 'Create environment'
+    public static readonly EnvironmentNameSelector = 'input[placeholder="e.g. training-q4"]'
+    public static readonly NoEnvironmentsText = 'No environments yet'
+    public static readonly RunningStatus = 'Running'
+    public static readonly HealthyStatus = 'Healthy'
+    public static readonly UnknownStatus = 'Unknown'
+    public static readonly EnvironmentBudgetMs = 10 * 60_000
     public static readonly OpenBudgetMs = 2 * 60_000
     public static readonly DialogBudgetMs = 30_000
     public static readonly CreateBudgetMs = 60_000
     public static readonly GrantBudgetMs = 60_000
+    private static readonly EnvironmentsShown = "the console's Environments page"
+    private static readonly EnvironmentDialog = 'the Create environment dialog to open'
+    private static readonly EnvironmentListed = 'the console to list the environment '
+    private static readonly EnvironmentRunning = 'the console to show the environment running and healthy: '
     private static readonly UsersShown = 'the console\'s Users & Access page for environment '
     private static readonly OnPage = 'on '
     private static readonly LocalAccountsOffered = 'the Create account dialog to say it creates a local account (the realm has local accounts)'
@@ -43,11 +55,61 @@ export class TenantConsolePage
     private static readonly AccountDisabled = 'the console to show the account Disabled: '
     private static readonly Pending = 'pending'
     private static readonly AnyEnvironment = ''
+    private static readonly NoText = ''
     private static readonly StartAnchor = '^'
     private static readonly EndAnchor = '$'
 
     public constructor(private readonly waiter: Waiter)
     {
+    }
+
+    /**
+     * Makes sure environment `name` exists and is ready (pragmatic-tenant-admin `tenant-portal/src/sections/environments/`:
+     * `environments.resources.mu`, `create-environment-dialog-view-model.ts`, `environment-row.ts`). Accounts and role
+     * grants are scoped to an environment and a fresh install has none ("No environments yet"), so the Owner creates it.
+     * Opens the Environments section; when `name` is not listed, presses "Create environment", types the name in the
+     * dialog (its template and type keep their defaults: "Blank development (dev-blank)" and "Runtime"; the server takes
+     * only name, template and type) and confirms with the dialog's own "Create environment" button. Then waits (it takes
+     * minutes) until the row shows the status "Running" and the health "Healthy". Returns whether it created it
+     * (false when it was already listed: resumed, never a second create).
+     */
+    public async EnsureEnvironment(page: IJourneyPage, name: string): Promise<boolean>
+    {
+        const T = TenantConsolePage
+        await this.waiter.Until(T.EnvironmentsShown, async () =>
+        {
+            if (await page.HasText(T.CreateEnvironmentLabel))
+            {
+                return WaitObservation.Met(true, T.CreateEnvironmentLabel)
+            }
+            if (await page.HasText(T.EnvironmentsNav))
+            {
+                await page.ClickText(T.EnvironmentsNav)
+            }
+            return WaitObservation.NotYet<boolean>(T.OnPage + new URL(page.Url()).host)
+        }, T.OpenBudgetMs)
+        let created = false
+        if (!await page.HasText(name))
+        {
+            await page.ClickText(T.CreateEnvironmentLabel)
+            await this.waiter.Until(T.EnvironmentDialog, async () =>
+                await page.Count(T.EnvironmentNameSelector) > 0 ? WaitObservation.Met(true, T.CancelLabel) : WaitObservation.NotYet<boolean>(T.Pending), T.DialogBudgetMs)
+            await page.Fill(T.EnvironmentNameSelector, name)
+            // The page's button has the same label: the dialog's is the one beside Cancel.
+            await page.ClickTextNear(T.CreateEnvironmentLabel, T.CancelLabel)
+            await this.waiter.Until(T.EnvironmentListed + name, async () =>
+                await page.HasText(name) && !await page.HasText(T.CancelLabel) ? WaitObservation.Met(true, name) : WaitObservation.NotYet<boolean>(T.CreateEnvironmentLabel), T.CreateBudgetMs)
+            created = true
+        }
+        await this.waiter.Until(T.EnvironmentRunning + name, async () =>
+        {
+            const status = await page.TextNear(name, new RegExp(T.StartAnchor + T.RunningStatus + T.EndAnchor))
+            const health = await page.TextNear(name, new RegExp(T.StartAnchor + T.HealthyStatus + T.EndAnchor))
+            return status !== T.NoText && health !== T.NoText
+                ? WaitObservation.Met(true, status + ' ' + health)
+                : WaitObservation.NotYet<boolean>(T.Pending)
+        }, T.EnvironmentBudgetMs)
+        return created
     }
 
     /** Opens Users & Access (from the overview or where the page already is) with `environment` picked (any when ''). */

@@ -14,6 +14,18 @@ import { ProcessResult, type IProcessRunner } from '../live/process-runner.js'
 import { Waiter } from '../waiter.js'
 import { FakeBrowser, FakeClock, TestEvidence } from './journey-fakes.js'
 
+/** A clock whose sleeping is the environment provisioning: it calls `OnSleep` once per sleep. */
+class ProvisioningClock extends FakeClock
+{
+    public OnSleep: () => void = () => undefined
+
+    public override async Sleep(ms: number): Promise<void>
+    {
+        await super.Sleep(ms)
+        this.OnSleep()
+    }
+}
+
 const RunId = 'run-0001'
 const Tenant = 'journey-run-0001-e'
 const ConsoleHost = 'console-' + Tenant + '.localtest.me'
@@ -58,7 +70,7 @@ class StaffWorld
     public readonly Owner = this.Browser.Console
     public readonly Staff = this.Browser.Fresh
     public readonly Evidence = new TestEvidence()
-    public readonly Clock = new FakeClock()
+    public readonly Clock = new ProvisioningClock()
     public readonly Waiter = new Waiter(this.Clock, 1000)
     public readonly Identity = new JourneyIdentity(JourneyPath.Enrolled, 'pragmatic-lab.com', Seed)
     public readonly Cluster = new CustomerCluster(new FakeKubectl(), 'pragmatic-customer')
@@ -73,6 +85,15 @@ class StaffWorld
     public Creates = 0
     public Disables = 0
     public EnvironmentPicked = false
+    /** The environment `journey` is listed on the Environments page. */
+    public EnvListed = false
+    /** It reports Running and Healthy. */
+    public EnvReady = false
+    public EnvCreates = 0
+    public EnvDialogOpen = false
+    /** How many page looks the environment takes to become ready after its creation. */
+    public ProvisionSleeps = 3
+    public Provisioned = -1
 
     public constructor(public readonly Path: JourneyPath = JourneyPath.Enrolled)
     {
@@ -80,7 +101,7 @@ class StaffWorld
         this.Context.Set(JourneyKeys.ConsoleUrl, ConsoleUrl)
         this.Context.Set(JourneyKeys.ConsoleHost, ConsoleHost)
         this.Context.Set(JourneyKeys.IdpHost, IdpHost)
-        this.Context.Set(JourneyKeys.Environment, Environment)
+        this.Clock.OnSleep = () => this.Provision()
         this.WireOwner()
         this.WireStaff()
     }
@@ -96,7 +117,9 @@ class StaffWorld
         const T = TenantConsolePage
         const E = EngineConsolePage
         this.Owner.OnGoto.set(ConsoleUrl, () => this.Owner.Show(ConsoleUrl, [E.SignInButton], [[E.EmailSelector, 1], [E.PasswordSelector, 1]]))
-        this.Owner.OnClick.set(E.SignInButton, () => this.Owner.Show(ConsoleUrl, [E.OverviewConnection, T.NavLabel]))
+        this.Owner.OnClick.set(E.SignInButton, () => this.Owner.Show(ConsoleUrl, [E.OverviewConnection, T.NavLabel, T.EnvironmentsNav]))
+        this.Owner.OnClick.set(T.EnvironmentsNav, () => this.ShowEnvironments())
+        this.Owner.OnClick.set(T.CreateEnvironmentLabel, () => this.CreateEnvironmentClicked())
         this.Owner.OnClick.set(T.NavLabel, () => this.ShowUsers())
         this.Owner.OnClick.set(T.EnvironmentPlaceholder, () => this.Owner.Texts.add(Environment))
         this.Owner.OnClick.set(Environment, () =>
@@ -133,12 +156,62 @@ class StaffWorld
     private ShowUsers(): void
     {
         const T = TenantConsolePage
-        const texts: string[] = [T.NavLabel, T.CreateAccountLabel, T.UsersTab, this.EnvironmentPicked ? Environment : T.EnvironmentPlaceholder]
+        const texts: string[] = [T.NavLabel, T.EnvironmentsNav, T.CreateAccountLabel, T.UsersTab, this.EnvironmentPicked ? Environment : T.EnvironmentPlaceholder]
         if (this.Created)
         {
             texts.push(StaffEmail)
         }
         this.Owner.Show(ConsoleUrl, texts)
+    }
+
+    private ShowEnvironments(): void
+    {
+        const T = TenantConsolePage
+        const texts: string[] = [T.NavLabel, T.EnvironmentsNav, T.CreateEnvironmentLabel]
+        this.Owner.Rows.clear()
+        if (this.EnvListed)
+        {
+            texts.push(Environment)
+            const row = this.EnvReady ? [T.RunningStatus, T.HealthyStatus] : [T.UnknownStatus, T.UnknownStatus]
+            texts.push(...row)
+            this.Owner.Rows.set(Environment, row)
+        }
+        else
+        {
+            texts.push(T.NoEnvironmentsText)
+        }
+        this.Owner.Show(ConsoleUrl, texts)
+    }
+
+    private CreateEnvironmentClicked(): void
+    {
+        const T = TenantConsolePage
+        if (!this.EnvDialogOpen)
+        {
+            this.EnvDialogOpen = true
+            this.Owner.Show(ConsoleUrl, [...this.Owner.Texts, T.CancelLabel], [[T.EnvironmentNameSelector, 1]])
+            return
+        }
+        this.EnvCreates++
+        this.EnvListed = true
+        this.EnvDialogOpen = false
+        this.Provisioned = 0
+        this.ShowEnvironments()
+    }
+
+    /** One look of the clock while the environment provisions. */
+    private Provision(): void
+    {
+        if (this.Provisioned < 0 || this.EnvReady)
+        {
+            return
+        }
+        this.Provisioned++
+        if (this.Provisioned >= this.ProvisionSleeps)
+        {
+            this.EnvReady = true
+            this.ShowEnvironments()
+        }
     }
 
     private CreateClicked(): void
@@ -202,6 +275,15 @@ describe('StaffSignInLeg', () =>
         assert.ok(w.Owner.Calls.includes('fill ' + T.PasswordSelector + '#0 ' + w.ExpectedPassword))
         assert.ok(w.Owner.Calls.includes('click ' + T.AdminRole))
         assert.ok(w.EnvironmentPicked)
+        // The Owner created the environment first, in the dialog's own name box, and waited for it to run healthy.
+        assert.equal(w.EnvCreates, 1)
+        assert.ok(w.EnvReady)
+        assert.ok(w.Owner.Calls.includes('fill ' + T.EnvironmentNameSelector + '#0 ' + Environment))
+        assert.equal(w.Context.Get(JourneyKeys.Environment), Environment)
+        assert.equal(w.Context.Get(JourneyKeys.EnvironmentState), JourneyState.EnvironmentReady)
+        const created = w.Owner.Calls.findIndex(call => call.startsWith('click ' + T.CreateEnvironmentLabel + ' near'))
+        const accounts = w.Owner.Calls.findIndex(call => call === 'click ' + T.CreateAccountLabel)
+        assert.ok(created >= 0 && accounts > created)
         // The staff user signed in on its own fresh context, not the Owner's page.
         assert.deepEqual(w.Browser.FreshPins, [['pin-' + ConsoleHost, 'pin-' + IdpHost]])
         assert.ok(w.Staff.Calls.includes('fill ' + E.PasswordSelector + '#0 ' + w.ExpectedPassword))
@@ -210,6 +292,57 @@ describe('StaffSignInLeg', () =>
         assert.match(steps, /local/i)
         assert.ok(!steps.includes(w.ExpectedPassword) && !steps.includes(OwnerPassword))
         assert.ok(!JSON.stringify(w.Context).includes(w.ExpectedPassword))
+        w.Evidence.Folder.Dispose()
+    })
+
+    it('records the environment before creating it, and waits until it is ready', async () =>
+    {
+        const w = new StaffWorld()
+        w.ProvisionSleeps = 5
+        const seen: Array<string | undefined> = []
+        const original = w.Owner.OnClick.get(TenantConsolePage.CreateEnvironmentLabel)!
+        w.Owner.OnClick.set(TenantConsolePage.CreateEnvironmentLabel, () =>
+        {
+            seen.push(w.Context.Get(JourneyKeys.Environment))
+            original()
+        })
+        await w.Leg().Run(w.Context)
+        assert.ok(seen.length > 0 && seen.every(value => value === Environment))
+        assert.ok(w.Clock.Slept >= 5000)
+        w.Evidence.Folder.Dispose()
+    })
+
+    it('resumes: an environment already listed and ready is not created again', async () =>
+    {
+        const w = new StaffWorld()
+        w.EnvListed = true
+        w.EnvReady = true
+        await w.Leg().Run(w.Context)
+        assert.equal(w.EnvCreates, 0)
+        assert.equal(w.Context.Get(JourneyKeys.EnvironmentState), JourneyState.EnvironmentReady)
+        assert.equal(w.Creates, 1)
+        w.Evidence.Folder.Dispose()
+    })
+
+    it('resumes: an environment listed but still provisioning is waited for, not created again', async () =>
+    {
+        const w = new StaffWorld()
+        w.EnvListed = true
+        w.Provisioned = 0
+        await w.Leg().Run(w.Context)
+        assert.equal(w.EnvCreates, 0)
+        assert.ok(w.EnvReady)
+        w.Evidence.Folder.Dispose()
+    })
+
+    it('fails when the environment never becomes ready', async () =>
+    {
+        const w = new StaffWorld()
+        w.ProvisionSleeps = Number.MAX_SAFE_INTEGER
+        await assert.rejects(() => w.Leg().Run(w.Context), /timed out/)
+        assert.equal(w.Context.Get(JourneyKeys.Environment), Environment)
+        assert.notEqual(w.Context.Get(JourneyKeys.EnvironmentState), JourneyState.EnvironmentReady)
+        assert.equal(w.Creates, 0)
         w.Evidence.Folder.Dispose()
     })
 
@@ -228,6 +361,8 @@ describe('StaffSignInLeg', () =>
     {
         const w = new StaffWorld()
         w.Created = true
+        w.EnvListed = true
+        w.EnvReady = true
         await w.Leg().Run(w.Context)
         assert.equal(w.Creates, 0)
         assert.ok(w.Granted)
@@ -240,6 +375,8 @@ describe('StaffSignInLeg', () =>
         const w = new StaffWorld()
         w.Created = true
         w.Granted = true
+        w.EnvListed = true
+        w.EnvReady = true
         await w.Leg().Run(w.Context)
         assert.ok(!w.Owner.Calls.includes('click ' + TenantConsolePage.GrantButton))
         w.Evidence.Folder.Dispose()
@@ -272,6 +409,7 @@ describe('StaffSignInLeg', () =>
         w.Created = true
         w.Granted = true
         w.Context.Set(JourneyKeys.StaffEmail, StaffEmail)
+        w.Context.Set(JourneyKeys.Environment, Environment)
         w.Context.Set(JourneyKeys.StaffState, JourneyState.StaffSignedIn)
         await w.Leg().Clean(w.Context)
         assert.equal(w.Disables, 1)
@@ -286,6 +424,7 @@ describe('StaffSignInLeg', () =>
         await w.Leg().Clean(w.Context)
         assert.equal(w.Owner.Calls.length, 0)
         w.Context.Set(JourneyKeys.StaffEmail, StaffEmail)
+        w.Context.Set(JourneyKeys.Environment, Environment)
         w.Context.Set(JourneyKeys.StaffState, JourneyState.StaffDisabled)
         await w.Leg().Clean(w.Context)
         assert.equal(w.Owner.Calls.length, 0)
@@ -296,6 +435,7 @@ describe('StaffSignInLeg', () =>
     {
         const w = new StaffWorld()
         w.Context.Set(JourneyKeys.StaffEmail, StaffEmail)
+        w.Context.Set(JourneyKeys.Environment, Environment)
         await w.Leg().Clean(w.Context)
         assert.equal(w.Disables, 0)
         assert.ok(w.Evidence.Sink.Lines.some(line => line.includes('not listed')))

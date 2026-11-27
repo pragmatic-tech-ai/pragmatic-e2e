@@ -16,6 +16,7 @@
     "entitlement-delivery",
     "journey-dns",
     "customer-cluster",
+    "tenant-realm",
     "hosted-placement"
   ]
 }
