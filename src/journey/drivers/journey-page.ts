@@ -50,6 +50,11 @@ export interface IJourneyPage
      * and body on a non-2xx answer. Used to drive customer-API operations the cabinet UI does not surface for a level.
      */
     PostJson(path: string, body: unknown): Promise<unknown>
+    /**
+     * The same-origin JSON request `method` `path` from inside the page, with an optional JSON body (none for GET or
+     * DELETE); returns the parsed answer (an empty body is null). Throws with the status and body on a non-2xx answer.
+     */
+    RequestJson(method: string, path: string, body?: unknown): Promise<unknown>
 }
 
 export class PlaywrightJourneyFrame implements IJourneyFrame
@@ -107,6 +112,10 @@ export class PlaywrightJourneyPage implements IJourneyPage
     private static readonly HrefAttribute = 'href'
     private static readonly NoText = 'no visible text on the page: '
     private static readonly NoValue = ''
+    private static readonly PostMethod = 'POST'
+    private static readonly ContentTypeHeader = 'content-type'
+    private static readonly JsonType = 'application/json'
+    private static readonly SameOrigin: RequestCredentials = 'same-origin'
     /** Half a table row: the cabinet's and the console's rows are 40 px or more apart. */
     private static readonly RowTolerancePx = 16
     private static readonly ActionTimeoutMs = 15_000
@@ -309,16 +318,22 @@ export class PlaywrightJourneyPage implements IJourneyPage
 
     public PostJson(path: string, body: unknown): Promise<unknown>
     {
-        return this.page.evaluate(async (input: { Path: string, Body: unknown }) =>
+        return this.RequestJson(PlaywrightJourneyPage.PostMethod, path, body)
+    }
+
+    public RequestJson(method: string, path: string, body?: unknown): Promise<unknown>
+    {
+        const headers = body === undefined ? {} : { [PlaywrightJourneyPage.ContentTypeHeader]: PlaywrightJourneyPage.JsonType }
+        return this.page.evaluate(async (input: { Method: string, Path: string, Body: unknown, Headers: Record<string, string>, Credentials: RequestCredentials }) =>
         {
-            const response = await fetch(input.Path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input.Body), credentials: 'same-origin' })
+            const response = await fetch(input.Path, { method: input.Method, headers: input.Headers, body: input.Body === undefined ? undefined : JSON.stringify(input.Body), credentials: input.Credentials })
             const text = await response.text()
             if (!response.ok)
             {
                 throw new Error('HTTP ' + response.status + ' ' + input.Path + ': ' + text)
             }
             return text.length === 0 ? null : JSON.parse(text)
-        }, { Path: path, Body: body })
+        }, { Method: method, Path: path, Body: body, Headers: headers, Credentials: PlaywrightJourneyPage.SameOrigin })
     }
 
     /**

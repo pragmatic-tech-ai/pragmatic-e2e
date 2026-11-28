@@ -234,10 +234,21 @@ export class FakePage implements IJourneyPage
     public readonly PostJsonCalls: Array<{ Path: string, Body: unknown }> = []
     public readonly PostJsonAnswers = new Map<string, unknown>()
 
+    public readonly RequestJsonCalls: Array<{ Method: string, Path: string, Body: unknown }> = []
+    /** Stubbed answers keyed by `Method + ' ' + Path`; unset requests answer null. */
+    public readonly RequestJsonResponses = new Map<string, unknown>()
+
     public async PostJson(path: string, body: unknown): Promise<unknown>
     {
         this.PostJsonCalls.push({ Path: path, Body: body })
-        return this.PostJsonAnswers.get(path) ?? null
+        const answer = await this.RequestJson('POST', path, body)
+        return this.PostJsonAnswers.get(path) ?? answer
+    }
+
+    public async RequestJson(method: string, path: string, body?: unknown): Promise<unknown>
+    {
+        this.RequestJsonCalls.push({ Method: method, Path: path, Body: body })
+        return this.RequestJsonResponses.get(method + ' ' + path) ?? null
     }
 
     /** Replaces the visible texts and selectors (a navigation to another page). */

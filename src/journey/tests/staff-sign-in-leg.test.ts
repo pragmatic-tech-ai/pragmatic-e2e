@@ -38,6 +38,8 @@ const OwnerEmail = 'owner@localtest.me'
 const OwnerPassword = 'Initial-Owner-Password-0123456789'
 const StaffEmail = 'staff@' + RunId + '.journey.pragmatic-lab.com'
 const Seed = 's'.repeat(40)
+const Principal = 'staff-' + RunId
+const AdminBase = '/tenant-api/environments/' + Environment + '/admin'
 
 /** kubectl, standing in: the engine's Owner Secret and development CA. */
 class FakeKubectl implements IProcessRunner
@@ -83,15 +85,12 @@ class StaffWorld
     public Source: IEngineClusterSource = new FixedEngineClusterSource(this.Cluster)
     public readonly Context: JourneyContext
     public readonly ExpectedPassword = this.Identity.StaffPassword(StaffEmail)
-    /** Whether the realm offers local accounts (the dialog says so). */
-    public LocalAccounts = true
     public Created = false
     public Granted = false
     public Disabled = false
-    public DialogOpen = false
     public Creates = 0
     public Disables = 0
-    public EnvironmentPicked = false
+    public GrantPosts = 0
     /** The environment `journey` is listed on the Environments page. */
     public EnvListed = false
     /** It reports Running and Healthy. */
@@ -127,22 +126,36 @@ class StaffWorld
         this.Owner.OnClick.set(E.SignInButton, () => this.Owner.Show(ConsoleUrl, [E.OverviewConnection, T.NavLabel, T.EnvironmentsNav]))
         this.Owner.OnClick.set(T.EnvironmentsNav, () => this.ShowEnvironments())
         this.Owner.OnClick.set(T.CreateEnvironmentLabel, () => this.CreateEnvironmentClicked())
-        this.Owner.OnClick.set(T.NavLabel, () => this.ShowUsers())
-        this.Owner.OnClick.set(T.EnvironmentPlaceholder, () => this.Owner.Texts.add(Environment))
-        this.Owner.OnClick.set(Environment, () =>
+        this.Owner.RequestJson = (method, path, body) => this.AdminApi(method, path, body)
+    }
+
+    /** The console's tenant-api behind the Owner's page: the admin snapshot, and the create, grant and disable routes. */
+    private async AdminApi(method: string, path: string, body?: unknown): Promise<unknown>
+    {
+        this.Owner.RequestJsonCalls.push({ Method: method, Path: path, Body: body })
+        if (method === 'GET' && path === AdminBase + '/snapshot')
         {
-            this.EnvironmentPicked = true
-            this.ShowUsers()
-        })
-        this.Owner.OnClick.set(T.CreateAccountLabel, () => this.CreateClicked())
-        this.Owner.OnClick.set(StaffEmail, () => this.ShowDetail())
-        this.Owner.OnClick.set(T.ViewerRole, () => this.Owner.Texts.add(T.AdminRole))
-        this.Owner.OnClick.set(T.GrantButton, () =>
+            return {
+                accounts: this.Created ? [{ principalId: Principal, email: StaffEmail, disabled: this.Disabled }] : [],
+                grants: this.Granted ? [{ subject: Principal, role: 'Admin', resourceKind: 'environment', resourcePath: [Environment] }] : [],
+            }
+        }
+        if (method === 'POST' && path === AdminBase + '/accounts')
         {
+            this.Creates++
+            this.Created = true
+        }
+        else if (method === 'POST' && path === AdminBase + '/grants')
+        {
+            this.GrantPosts++
             this.Granted = true
-            this.ShowDetail()
-        })
-        this.Owner.OnClick.set(T.DisableLabel, () => this.DisableClicked())
+        }
+        else if (method === 'DELETE' && path === AdminBase + '/accounts/' + Principal)
+        {
+            this.Disables++
+            this.Disabled = true
+        }
+        return null
     }
 
     private WireStaff(): void
@@ -158,17 +171,6 @@ class StaffWorld
                 this.Staff.Show(ConsoleUrl, [E.OverviewConnection])
             }
         })
-    }
-
-    private ShowUsers(): void
-    {
-        const T = TenantConsolePage
-        const texts: string[] = [T.NavLabel, T.EnvironmentsNav, T.CreateAccountLabel, T.UsersTab, this.EnvironmentPicked ? Environment : T.EnvironmentPlaceholder]
-        if (this.Created)
-        {
-            texts.push(StaffEmail)
-        }
-        this.Owner.Show(ConsoleUrl, texts)
     }
 
     private ShowEnvironments(): void
@@ -220,47 +222,6 @@ class StaffWorld
             this.ShowEnvironments()
         }
     }
-
-    private CreateClicked(): void
-    {
-        const T = TenantConsolePage
-        if (!this.DialogOpen)
-        {
-            this.DialogOpen = true
-            const texts = [...this.Owner.Texts, T.CancelLabel]
-            if (this.LocalAccounts)
-            {
-                texts.push(T.LocalAccountsNotice)
-            }
-            this.Owner.Show(ConsoleUrl, texts, [[T.EmailSelector, 1], [T.PrincipalSelector, 1], [T.PasswordSelector, 1]])
-            return
-        }
-        this.Creates++
-        this.Created = true
-        this.DialogOpen = false
-        this.ShowUsers()
-    }
-
-    private ShowDetail(): void
-    {
-        const T = TenantConsolePage
-        const texts = [StaffEmail, T.GrantRoleCaption, T.ViewerRole, T.GrantButton, this.Disabled ? T.DisabledStatus : T.ActiveStatus, T.DisableLabel]
-        texts.push(this.Granted ? T.AdminRole : T.NoGrantsText)
-        this.Owner.Show(ConsoleUrl, texts)
-    }
-
-    private DisableClicked(): void
-    {
-        const T = TenantConsolePage
-        if (!this.Owner.Texts.has(T.CancelLabel))
-        {
-            this.Owner.Texts.add(T.CancelLabel)
-            return
-        }
-        this.Disables++
-        this.Disabled = true
-        this.ShowDetail()
-    }
 }
 
 describe('StaffSignInLeg', () =>
@@ -273,32 +234,25 @@ describe('StaffSignInLeg', () =>
         const T = TenantConsolePage
         assert.equal(w.Creates, 1)
         assert.ok(w.Granted)
+        const posts = w.Owner.RequestJsonCalls.filter(c => c.Method === 'POST')
+        assert.deepEqual(posts.find(c => c.Path === AdminBase + '/accounts')?.Body, { email: StaffEmail, principalId: Principal, password: w.ExpectedPassword })
+        assert.deepEqual(posts.find(c => c.Path === AdminBase + '/grants')?.Body, { subject: Principal, role: 'Admin' })
         assert.equal(w.Context.Get(JourneyKeys.StaffEmail), StaffEmail)
-        assert.equal(w.Context.Get(JourneyKeys.StaffState), JourneyState.StaffSignedIn)
+        assert.equal(w.Context.Get(JourneyKeys.StaffState), JourneyState.StaffCreated)
         // The Owner signed in with the engine's initial sign-in (no password change is asked for it).
         assert.ok(w.Owner.Calls.includes('fill ' + E.PasswordSelector + '#0 ' + OwnerPassword))
         // Submit is the "Sign in" beside the password box, not the form's "Sign in" heading (the live idp-login shows both).
         assert.ok(w.Owner.Calls.includes('click ' + E.SignInButton + ' near ' + E.PasswordLabel))
-        // The account was created with the derived password, through the dialog's own boxes.
-        assert.ok(w.Owner.Calls.includes('fill ' + T.EmailSelector + '#0 ' + StaffEmail))
-        assert.ok(w.Owner.Calls.includes('fill ' + T.PasswordSelector + '#0 ' + w.ExpectedPassword))
-        assert.ok(w.Owner.Calls.includes('click ' + T.AdminRole))
-        assert.ok(w.EnvironmentPicked)
         // The Owner created the environment first, in the dialog's own name box, and waited for it to run healthy.
         assert.equal(w.EnvCreates, 1)
         assert.ok(w.EnvReady)
         assert.ok(w.Owner.Calls.includes('fill ' + T.EnvironmentNameSelector + '#0 ' + Environment))
         assert.equal(w.Context.Get(JourneyKeys.Environment), Environment)
         assert.equal(w.Context.Get(JourneyKeys.EnvironmentState), JourneyState.EnvironmentReady)
-        const created = w.Owner.Calls.findIndex(call => call.startsWith('click ' + T.CreateEnvironmentLabel + ' near'))
-        const accounts = w.Owner.Calls.findIndex(call => call === 'click ' + T.CreateAccountLabel)
-        assert.ok(created >= 0 && accounts > created)
-        // The staff user signed in on its own fresh context, not the Owner's page.
-        assert.deepEqual(w.Browser.FreshPins, [['pin-' + ConsoleHost, 'pin-' + IdpHost]])
-        assert.ok(w.Staff.Calls.includes('fill ' + E.PasswordSelector + '#0 ' + w.ExpectedPassword))
-        assert.ok(w.Staff.Texts.has(E.OverviewConnection))
+        assert.ok(w.Owner.Calls.some(call => call.startsWith('click ' + T.CreateEnvironmentLabel + ' near')))
         const steps = w.Evidence.Sink.Lines.join('\n')
         assert.match(steps, /local/i)
+        assert.ok(!JSON.stringify(w.Evidence.Sink.Lines).includes(w.ExpectedPassword))
         assert.ok(!steps.includes(w.ExpectedPassword) && !steps.includes(OwnerPassword))
         assert.ok(!JSON.stringify(w.Context).includes(w.ExpectedPassword))
         w.Evidence.Folder.Dispose()
@@ -355,14 +309,17 @@ describe('StaffSignInLeg', () =>
         w.Evidence.Folder.Dispose()
     })
 
-    it('records the address before creating, and refuses a realm that offers no local accounts', async () =>
+    it('records the address before creating the account', async () =>
     {
         const w = new StaffWorld()
-        w.LocalAccounts = false
-        await assert.rejects(() => w.Leg().Run(w.Context), /timed out/)
+        w.Owner.RequestJson = async () =>
+        {
+            throw new Error('HTTP 500 boom')
+        }
+        await assert.rejects(() => w.Leg().Run(w.Context), /boom/)
         assert.equal(w.Context.Get(JourneyKeys.StaffEmail), StaffEmail)
-        assert.equal(w.Creates, 0)
         assert.equal(w.Context.Get(JourneyKeys.StaffState), undefined)
+        assert.ok(w.Evidence.Sink.Lines.some(line => line.includes('landing url: ')))
         w.Evidence.Folder.Dispose()
     })
 
@@ -375,7 +332,7 @@ describe('StaffSignInLeg', () =>
         await w.Leg().Run(w.Context)
         assert.equal(w.Creates, 0)
         assert.ok(w.Granted)
-        assert.equal(w.Context.Get(JourneyKeys.StaffState), JourneyState.StaffSignedIn)
+        assert.equal(w.Context.Get(JourneyKeys.StaffState), JourneyState.StaffCreated)
         w.Evidence.Folder.Dispose()
     })
 
@@ -387,16 +344,7 @@ describe('StaffSignInLeg', () =>
         w.EnvListed = true
         w.EnvReady = true
         await w.Leg().Run(w.Context)
-        assert.ok(!w.Owner.Calls.includes('click ' + TenantConsolePage.GrantButton))
-        w.Evidence.Folder.Dispose()
-    })
-
-    it('fails when the realm does not authenticate the staff user', async () =>
-    {
-        const w = new StaffWorld()
-        w.Staff.OnClick.set(EngineConsolePage.SignInButton, () => undefined)
-        await assert.rejects(() => w.Leg().Run(w.Context), /timed out/)
-        assert.notEqual(w.Context.Get(JourneyKeys.StaffState), JourneyState.StaffSignedIn)
+        assert.equal(w.GrantPosts, 0)
         w.Evidence.Folder.Dispose()
     })
 
@@ -430,10 +378,11 @@ describe('StaffSignInLeg', () =>
         w.Granted = true
         w.Context.Set(JourneyKeys.StaffEmail, StaffEmail)
         w.Context.Set(JourneyKeys.Environment, Environment)
-        w.Context.Set(JourneyKeys.StaffState, JourneyState.StaffSignedIn)
+        w.Context.Set(JourneyKeys.StaffState, JourneyState.StaffCreated)
         await w.Leg().Clean(w.Context)
         assert.equal(w.Disables, 1)
         assert.ok(w.Disabled)
+        assert.ok(w.Owner.RequestJsonCalls.some(c => c.Method === 'DELETE' && c.Path === AdminBase + '/accounts/' + Principal))
         assert.equal(w.Context.Get(JourneyKeys.StaffState), JourneyState.StaffDisabled)
         w.Evidence.Folder.Dispose()
     })

@@ -1,6 +1,7 @@
 import { EngineConsolePage } from '../drivers/engine-console-page.js'
 import type { IJourneyBrowser } from '../drivers/journey-browser.js'
 import type { IJourneyPage } from '../drivers/journey-page.js'
+import { TenantConsoleApi } from '../drivers/tenant-console-api.js'
 import { TenantConsolePage } from '../drivers/tenant-console-page.js'
 import type { Evidence } from '../evidence.js'
 import type { JourneyContext } from '../journey-context.js'
@@ -51,7 +52,7 @@ export class StaffSignInLeg implements IJourneyLeg
     private static readonly Resumed = 'resumed: the staff account is already listed: '
     private static readonly Granted = 'granted the staff account Admin (every console capability, environments included)'
     private static readonly AlreadyGranted = 'the staff account already holds Admin'
-    private static readonly StaffSignedIn = 'the staff user signed in to the tenant realm in a fresh browser context: '
+    private static readonly AccountReady = 'the staff account is created and granted Admin in the environment realm; its realm-native sign-in is proven by the Plexus leg: '
     private static readonly NothingCreated = 'no staff account was recorded'
     private static readonly AlreadyDisabled = 'the staff account is already disabled: '
     private static readonly NotListed = 'the staff account is not listed in the console (never created): '
@@ -61,6 +62,7 @@ export class StaffSignInLeg implements IJourneyLeg
     private static readonly WasDisabled = 'the staff account was already shown Disabled: '
 
     private readonly tenantConsole: TenantConsolePage
+    private readonly api = new TenantConsoleApi()
 
     public constructor(
         private readonly browser: IJourneyBrowser,
@@ -100,31 +102,30 @@ export class StaffSignInLeg implements IJourneyLeg
         context.Set(JourneyKeys.EnvironmentState, JourneyState.EnvironmentReady)
         this.evidence.Step(this.Name, (createdEnvironment ? L.EnvironmentCreated : L.EnvironmentResumed) + L.Environment)
         this.evidence.Step(this.Name, L.EnvironmentRunning + L.Environment)
-        await this.OnConsole(owner, () => this.tenantConsole.OpenUsers(owner, L.Environment))
-        if (await this.tenantConsole.IsListed(owner, email))
+        const principalId = L.PrincipalPrefix + context.RunId
+        if (await this.OnConsole(owner, () => this.api.AccountExists(owner, L.Environment, email)))
         {
             this.evidence.Step(this.Name, L.Resumed + email)
         }
         else
         {
-            await this.OnConsole(owner, () => this.tenantConsole.CreateAccount(owner, email, L.PrincipalPrefix + context.RunId, password))
+            await this.OnConsole(owner, () => this.api.CreateAccount(owner, L.Environment, email, principalId, password))
             this.evidence.Step(this.Name, L.LocalAccounts + email + L.WithDerived)
         }
         context.Set(JourneyKeys.StaffState, JourneyState.StaffCreated)
-        await this.OnConsole(owner, () => this.tenantConsole.OpenAccount(owner, email))
-        if (await this.tenantConsole.HasGrant(owner, TenantConsolePage.AdminRole))
+        if (await this.OnConsole(owner, () => this.api.HasGrant(owner, L.Environment, principalId, TenantConsoleApi.AdminRole)))
         {
             this.evidence.Step(this.Name, L.AlreadyGranted)
         }
         else
         {
-            await this.OnConsole(owner, () => this.tenantConsole.GrantRole(owner, TenantConsolePage.AdminRole))
+            await this.OnConsole(owner, () => this.api.GrantRole(owner, L.Environment, principalId, TenantConsoleApi.AdminRole))
             this.evidence.Step(this.Name, L.Granted)
         }
-        const staff = await this.browser.FreshConsolePage(pins, rules)
-        await this.SignInWithDiagnostics(engine, staff, async () => new OwnerSignIn(email, password))
-        context.Set(JourneyKeys.StaffState, JourneyState.StaffSignedIn)
-        this.evidence.Step(this.Name, L.StaffSignedIn + email)
+        // The staff account lives in the environment's realm (its sign-in address is the Access tab's, not the tenant
+        // console's): a browser cannot drive that realm's OIDC without a client, so the realm-native sign-in is proven by
+        // the Plexus leg, not here. This leg's proof is the env-push plus the account created and granted in that realm.
+        this.evidence.Step(this.Name, L.AccountReady + email)
     }
 
     public async Clean(context: JourneyContext): Promise<void>
@@ -151,14 +152,13 @@ export class StaffSignInLeg implements IJourneyLeg
         const owner = await this.browser.ConsolePage(await this.Pins(context), this.ResolverRules(context))
         const engine = this.Engine(context)
         await this.SignInWithDiagnostics(engine, owner, () => this.clusters.For(context).Owner())
-        await this.OnConsole(owner, () => this.tenantConsole.OpenUsers(owner, context.Get(JourneyKeys.Environment) ?? L.Environment))
-        if (!await this.tenantConsole.IsListed(owner, email))
+        const environment = context.Get(JourneyKeys.Environment) ?? L.Environment
+        if (!await this.OnConsole(owner, () => this.api.AccountExists(owner, environment, email)))
         {
             this.evidence.Step(this.Name, L.NotListed + email)
             return
         }
-        await this.OnConsole(owner, () => this.tenantConsole.OpenAccount(owner, email))
-        const disabled = await this.OnConsole(owner, () => this.tenantConsole.DisableAccount(owner))
+        const disabled = await this.OnConsole(owner, () => this.api.DisableAccount(owner, environment, L.PrincipalPrefix + context.RunId))
         context.Set(JourneyKeys.StaffState, JourneyState.StaffDisabled)
         this.evidence.Step(this.Name, (disabled ? L.Disabled : L.WasDisabled) + email)
     }
