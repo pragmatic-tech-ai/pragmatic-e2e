@@ -17,6 +17,7 @@ import { TempFolder, TestEvidence } from './journey-fakes.js'
 
 const RunId = 'run-0001'
 const ConsoleHost = 'acme-ab2c.hives.pragmatic-tech.ai'
+const ConsoleUrl = 'https://acme-ab2c.hives.pragmatic-tech.ai:28444/'
 const IdpHost = 'idp-acme.hives.pragmatic-tech.ai'
 const Tenant = 'acme'
 const PlatformAddress = 'https://agent.pragmatic-tech.ai'
@@ -65,6 +66,7 @@ class PlexusWorld
     {
         writeFileSync(this.HostsFile, '127.0.0.1 localhost\n')
         this.Context.Set(JourneyKeys.ConsoleHost, ConsoleHost)
+        this.Context.Set(JourneyKeys.ConsoleUrl, ConsoleUrl)
         this.Context.Set(JourneyKeys.IdpHost, IdpHost)
         this.Context.Set(JourneyKeys.Tenant, Tenant)
     }
@@ -90,32 +92,37 @@ describe('PlexusLeg', () =>
         w.Dispose()
     })
 
-    it('spawns the Plexus journey spec as the central identity with the canonical E2E inputs', async () =>
+    it('spawns the Plexus journey spec as the staff account at the environment realm with the canonical E2E inputs', async () =>
     {
         const w = new PlexusWorld()
         await w.Leg().Run(w.Context)
         assert.equal(w.Executor.Spawns.length, 1)
         const spawn = w.Executor.Spawns[0]
         const env = spawn.Options.Env
+        const staffEmail = StaffSignInLeg.EmailFor(RunId)
+        const staffPassword = w.Identity.StaffPassword(staffEmail)
         assert.equal(spawn.Program, 'xvfb-run')
         assert.deepEqual(spawn.Argv, ['-a', '--server-args=-screen 0 1920x1080x24', 'npx', 'playwright', 'test', 'e2e/journey', '--reporter=line'])
         assert.equal(spawn.Options.Cwd, join('/repos/plexus', 'apps/plexus'))
         assert.equal(env['SP_JOURNEY_E2E'], '1')
         assert.equal(env['PLEXUS_E2E_SIGN_IN'], 'realm')
         assert.equal(env['PLEXUS_E2E_PLATFORM_ADDRESS'], PlatformAddress)
-        assert.equal(env['PLEXUS_E2E_OWNER_EMAIL'], w.Identity.Email)
-        assert.equal(spawn.PasswordText, w.Identity.Password)
+        assert.equal(env['PLEXUS_E2E_OWNER_EMAIL'], staffEmail)
+        assert.equal(spawn.PasswordText, staffPassword)
         assert.equal(spawn.CaText, 'PEM-BODY')
         assert.equal(spawn.IdpCaText, 'PEM-BODY')
+        assert.equal(env['PLEXUS_E2E_IDP_LOGIN'], 'browser')
+        assert.equal(env['PLEXUS_E2E_IDP_CERT_FILE'], env['PLEXUS_E2E_IDP_CA_FILE'], 'the idp cert pin reuses the dev-CA file')
         assert.equal(env['PLEXUS_E2E_REALM_ISSUER'], 'https://' + IdpHost + '/realms/' + Tenant)
         assert.equal(env['PLEXUS_JOURNEY_ENVIRONMENT'], StaffSignInLeg.Environment)
+        assert.equal(env['PLEXUS_JOURNEY_CONSOLE_ADDRESS'], ConsoleUrl)
         assert.equal(env['NODE_EXTRA_CA_CERTS'], undefined, 'the canonical launcher sets the node CA itself')
-        assert.ok(!Object.values(env).some(v => v === w.Identity.Password), 'the password is never an environment value')
+        assert.ok(!Object.values(env).some(v => v === staffPassword), 'the password is never an environment value')
         const hosts = readFileSync(w.HostsFile, 'utf8')
         assert.ok(hosts.includes('127.0.0.1 ' + ConsoleHost), 'the console host is aliased')
         assert.ok(hosts.includes('127.0.0.1 ' + IdpHost), 'the idp host is aliased')
         assert.equal(w.Context.Get(JourneyKeys.PlexusState), JourneyState.PlexusSignedIn)
-        assert.ok(!w.Evidence.Sink.Lines.some(l => l.includes(w.Identity.Password)))
+        assert.ok(!w.Evidence.Sink.Lines.some(l => l.includes(staffPassword)))
         w.Dispose()
     })
 
@@ -146,7 +153,7 @@ describe('PlexusLeg', () =>
     it('fails with the redacted output tail on a non-zero exit', async () =>
     {
         const w = new PlexusWorld()
-        const password = w.Identity.Password
+        const password = w.Identity.StaffPassword(StaffSignInLeg.EmailFor(RunId))
         w.Executor.Code = 1
         w.Executor.Stdout = 'x'.repeat(10000) + ' the deploy broke ' + password
         await assert.rejects(() => w.Leg().Run(w.Context), (error: Error) =>

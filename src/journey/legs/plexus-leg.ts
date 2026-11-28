@@ -49,8 +49,12 @@ export class PlexusLeg implements IJourneyLeg
     private static readonly EnvOwnerPasswordFile = 'PLEXUS_E2E_OWNER_PASSWORD_FILE'
     private static readonly EnvDesktopCaFile = 'PLEXUS_E2E_DESKTOP_CA_FILE'
     private static readonly EnvIdpCaFile = 'PLEXUS_E2E_IDP_CA_FILE'
+    private static readonly EnvIdpCertFile = 'PLEXUS_E2E_IDP_CERT_FILE'
+    private static readonly EnvIdpLogin = 'PLEXUS_E2E_IDP_LOGIN'
+    private static readonly IdpLoginBrowser = 'browser'
     private static readonly EnvRealmIssuer = 'PLEXUS_E2E_REALM_ISSUER'
     private static readonly EnvEnvironment = 'PLEXUS_JOURNEY_ENVIRONMENT'
+    private static readonly EnvConsoleAddress = 'PLEXUS_JOURNEY_CONSOLE_ADDRESS'
     /** Live-iteration seam: when set and non-empty, pins the realm issuer verbatim. */
     private static readonly EnvRealmIssuerOverride = 'PLEXUS_JOURNEY_REALM_ISSUER'
     private static readonly FlagOn = '1'
@@ -59,7 +63,7 @@ export class PlexusLeg implements IJourneyLeg
     private static readonly SpecFailed = 'the Plexus journey spec failed with code '
     private static readonly OutputTail = '; output tail: '
     private static readonly Started = 'ran the Plexus journey spec against the hosted realm via the console at '
-    private static readonly Passed = 'Plexus signed in realm-native as the central identity and deployed and read a graph: '
+    private static readonly Passed = 'Plexus signed in realm-native as the staff account at the environment realm and deployed a graph: '
     private static readonly NothingToClean = 'nothing to undo: the hive teardown removes the environment and place-hosted removes the host aliases'
 
     public constructor(
@@ -84,13 +88,18 @@ export class PlexusLeg implements IJourneyLeg
         }
         const consoleHost = context.Require(JourneyKeys.ConsoleHost)
         const idpHost = context.Require(JourneyKeys.IdpHost)
+        // Plexus signs in directly at the tenant console (the console names its own tenant realm), bypassing
+        // platform email→tenant discovery, which does not resolve a hosted tenant. The staff account is a
+        // local account in the tenant realm, granted Admin on the environment `journey`; the realm it
+        // authorizes at is the tenant realm (the idp host), which the console names.
+        const consoleAddress = context.Require(JourneyKeys.ConsoleUrl)
         const overridden = process.env[L.EnvRealmIssuerOverride]
         const realmIssuer = overridden !== undefined && overridden.length > 0
             ? overridden
             : L.HttpsScheme + idpHost + L.RealmsSegment + context.Require(JourneyKeys.Tenant)
         this.aliases.Add([consoleHost, idpHost])
-        const email = this.identity.Email
-        const password = this.identity.Password
+        const email = StaffSignInLeg.EmailFor(context.RunId)
+        const password = this.identity.StaffPassword(email)
         const folder = mkdtempSync(join(tmpdir(), L.TempPrefix))
         try
         {
@@ -107,8 +116,11 @@ export class PlexusLeg implements IJourneyLeg
                 [L.EnvOwnerPasswordFile]: passwordFile,
                 [L.EnvDesktopCaFile]: caFile,
                 [L.EnvIdpCaFile]: caFile,
+                [L.EnvIdpCertFile]: caFile,
+                [L.EnvIdpLogin]: L.IdpLoginBrowser,
                 [L.EnvRealmIssuer]: realmIssuer,
                 [L.EnvEnvironment]: StaffSignInLeg.Environment,
+                [L.EnvConsoleAddress]: consoleAddress,
             }
             const result = await this.executor.Execute(L.Program, L.SpecArgv, new ProcessOptions(join(this.plexusRepo, L.AppFolder), env), L.SpecTimeoutMs)
             this.evidence.Step(this.Name, L.Started + consoleHost)
