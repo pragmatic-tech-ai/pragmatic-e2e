@@ -87,7 +87,7 @@ export class JourneyLegs
         // Plexus and the graph check are the Hosted (b) proof; the other paths keep their places pending.
         const later: IJourneyLeg[] = path === JourneyPath.Hosted
             ? [
-                new PlexusLeg(engine, inputs.Identity, inputs.Executor, inputs.Evidence, hiveDependency, hostedClusters.Aliases, inputs.PlexusRepo),
+                new PlexusLeg(engine, inputs.Identity, inputs.Executor, inputs.Evidence, hiveDependency, hostedClusters.Aliases, config.EdgeUrl, inputs.PlexusRepo),
                 new DeployGraphsLeg(inputs.Browser, engine, inputs.Trust, inputs.Waiter, inputs.Evidence, hiveDependency),
             ]
             : [

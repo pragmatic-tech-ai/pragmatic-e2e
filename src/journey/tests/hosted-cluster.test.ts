@@ -82,7 +82,7 @@ describe('HostedCluster', () =>
         const reach = cluster.StartConsoleReach(HostedCluster.ConsolePort)
         assert.equal(starter.Started.length, 1)
         assert.equal(starter.Started[0]?.Program, 'kubectl')
-        assert.deepEqual(starter.Started[0]?.Argv, ['--context', Context, 'port-forward', '--namespace', 'ingress-nginx', '--address', '127.0.0.1', 'svc/ingress-nginx-controller', HostedCluster.ConsolePort + ':443'])
+        assert.deepEqual(starter.Started[0]?.Argv, ['--context', Context, 'port-forward', '--namespace', 'ingress-nginx', '--address', '127.0.0.1', 'svc/ingress-nginx-controller', HostedCluster.ConsolePort + ':443', '443:443'])
         starter.Started[0]?.OnExit(1)
         await new Promise(resolve => setTimeout(resolve, 20))
         assert.equal(starter.Started.length, 2, 'restarted after the forward died')

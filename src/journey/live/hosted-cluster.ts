@@ -156,6 +156,8 @@ export class HostedCluster implements IEngineCluster
     private static readonly IngressNamespace = 'ingress-nginx'
     private static readonly IngressService = 'svc/ingress-nginx-controller'
     private static readonly HttpsPort = ':443'
+    /** The privileged mapping: the advertised :443 reachable on loopback for the Plexus node process (undici honours /etc/hosts for the host only). */
+    private static readonly PrivilegedHttpsMapping = '443:443'
     private static readonly ConsoleIngress = 'pragmatic-tenant-admin-'
     private static readonly IdpIngress = 'pragmatic-idp-'
     private static readonly Scheme = 'https://'
@@ -232,12 +234,12 @@ export class HostedCluster implements IEngineCluster
         return this.HostOf(HostedCluster.IdpIngress)
     }
 
-    /** Starts the console's port-forward (loopback `localPort` to ingress-nginx's 443) and keeps it running until Stop. */
+    /** Starts the console's port-forward (loopback `localPort` and 443 to ingress-nginx's 443) and keeps it running until Stop. */
     public StartConsoleReach(localPort: number): ConsoleReach
     {
         const H = HostedCluster
         const A = ClusterArgs
-        const argv = [A.Context, this.Context, H.PortForward, A.NamespaceFlag, H.IngressNamespace, H.AddressFlag, H.Loopback, H.IngressService, localPort + H.HttpsPort]
+        const argv = [A.Context, this.Context, H.PortForward, A.NamespaceFlag, H.IngressNamespace, H.AddressFlag, H.Loopback, H.IngressService, localPort + H.HttpsPort, H.PrivilegedHttpsMapping]
         return new ConsoleReach(this.starter, H.Kubectl, argv, this.restartDelayMs)
     }
 

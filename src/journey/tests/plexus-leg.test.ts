@@ -17,6 +17,9 @@ import { TempFolder, TestEvidence } from './journey-fakes.js'
 
 const RunId = 'run-0001'
 const ConsoleHost = 'acme-ab2c.hives.pragmatic-tech.ai'
+const IdpHost = 'idp-acme.hives.pragmatic-tech.ai'
+const Tenant = 'acme'
+const PlatformAddress = 'https://agent.pragmatic-tech.ai'
 const Seed = 's'.repeat(40)
 
 class FakeKubectl implements IProcessRunner
@@ -33,7 +36,7 @@ class FakeKubectl implements IProcessRunner
 
 class FakeExecutor implements IProcessExecutor
 {
-    public readonly Spawns: Array<{ Program: string, Argv: readonly string[], Options: ProcessOptions, CaText: string, PasswordText: string }> = []
+    public readonly Spawns: Array<{ Program: string, Argv: readonly string[], Options: ProcessOptions, CaText: string, IdpCaText: string, PasswordText: string }> = []
     public Code = 0
     public Stdout = 'ok'
     public Stderr = ''
@@ -41,9 +44,10 @@ class FakeExecutor implements IProcessExecutor
     public async Execute(program: string, argv: readonly string[], options: ProcessOptions | undefined): Promise<ProcessResult>
     {
         const opts = options!
-        const ca = opts.Env['NODE_EXTRA_CA_CERTS']
-        const pw = opts.Env['PLEXUS_JOURNEY_PASSWORD_FILE']
-        this.Spawns.push({ Program: program, Argv: argv, Options: opts, CaText: ca !== undefined && existsSync(ca) ? readFileSync(ca, 'utf8') : '', PasswordText: pw !== undefined && existsSync(pw) ? readFileSync(pw, 'utf8') : '' })
+        const ca = opts.Env['PLEXUS_E2E_DESKTOP_CA_FILE']
+        const idpCa = opts.Env['PLEXUS_E2E_IDP_CA_FILE']
+        const pw = opts.Env['PLEXUS_E2E_OWNER_PASSWORD_FILE']
+        this.Spawns.push({ Program: program, Argv: argv, Options: opts, CaText: ca !== undefined && existsSync(ca) ? readFileSync(ca, 'utf8') : '', IdpCaText: idpCa !== undefined && existsSync(idpCa) ? readFileSync(idpCa, 'utf8') : '', PasswordText: pw !== undefined && existsSync(pw) ? readFileSync(pw, 'utf8') : '' })
         return new ProcessResult(this.Code, this.Stdout, this.Stderr)
     }
 }
@@ -61,11 +65,13 @@ class PlexusWorld
     {
         writeFileSync(this.HostsFile, '127.0.0.1 localhost\n')
         this.Context.Set(JourneyKeys.ConsoleHost, ConsoleHost)
+        this.Context.Set(JourneyKeys.IdpHost, IdpHost)
+        this.Context.Set(JourneyKeys.Tenant, Tenant)
     }
 
     public Leg(): PlexusLeg
     {
-        return new PlexusLeg(new FixedEngineClusterSource(new CustomerCluster(new FakeKubectl(), 'c')), this.Identity, this.Executor, this.Evidence.Evidence, JourneyDependency.HostedPlacement, new HostAliases(this.HostsFile), this.Repo)
+        return new PlexusLeg(new FixedEngineClusterSource(new CustomerCluster(new FakeKubectl(), 'c')), this.Identity, this.Executor, this.Evidence.Evidence, JourneyDependency.HostedPlacement, new HostAliases(this.HostsFile), PlatformAddress, this.Repo)
     }
 
     public Dispose(): void
@@ -84,36 +90,63 @@ describe('PlexusLeg', () =>
         w.Dispose()
     })
 
-    it('spawns the Plexus journey spec with the env realm address, the CA file and a password file', async () =>
+    it('spawns the Plexus journey spec as the central identity with the canonical E2E inputs', async () =>
     {
         const w = new PlexusWorld()
         await w.Leg().Run(w.Context)
         assert.equal(w.Executor.Spawns.length, 1)
         const spawn = w.Executor.Spawns[0]
         const env = spawn.Options.Env
-        const host = 'journey.' + ConsoleHost
-        const email = StaffSignInLeg.EmailFor(RunId)
         assert.equal(spawn.Program, 'xvfb-run')
         assert.deepEqual(spawn.Argv, ['-a', '--server-args=-screen 0 1920x1080x24', 'npx', 'playwright', 'test', 'e2e/journey', '--reporter=line'])
         assert.equal(spawn.Options.Cwd, join('/repos/plexus', 'apps/plexus'))
         assert.equal(env['SP_JOURNEY_E2E'], '1')
-        assert.equal(env['PLEXUS_JOURNEY_EMAIL'], email)
-        assert.equal(env['PLEXUS_PLATFORM_ADDRESS'], 'https://' + host + ':28444')
-        assert.equal(env['PLEXUS_JOURNEY_RUNTIME_WS_URL'], 'wss://' + host + ':28444')
+        assert.equal(env['PLEXUS_E2E_SIGN_IN'], 'realm')
+        assert.equal(env['PLEXUS_E2E_PLATFORM_ADDRESS'], PlatformAddress)
+        assert.equal(env['PLEXUS_E2E_OWNER_EMAIL'], w.Identity.Email)
+        assert.equal(spawn.PasswordText, w.Identity.Password)
         assert.equal(spawn.CaText, 'PEM-BODY')
-        const password = w.Identity.StaffPassword(email)
-        assert.equal(spawn.PasswordText, password)
-        assert.ok(!Object.values(env).some(v => v === password), 'the password is never an environment value')
-        assert.ok(readFileSync(w.HostsFile, 'utf8').includes('127.0.0.1 ' + host), 'the env realm host is aliased')
+        assert.equal(spawn.IdpCaText, 'PEM-BODY')
+        assert.equal(env['PLEXUS_E2E_REALM_ISSUER'], 'https://' + IdpHost + '/realms/' + Tenant)
+        assert.equal(env['PLEXUS_JOURNEY_ENVIRONMENT'], StaffSignInLeg.Environment)
+        assert.equal(env['NODE_EXTRA_CA_CERTS'], undefined, 'the canonical launcher sets the node CA itself')
+        assert.ok(!Object.values(env).some(v => v === w.Identity.Password), 'the password is never an environment value')
+        const hosts = readFileSync(w.HostsFile, 'utf8')
+        assert.ok(hosts.includes('127.0.0.1 ' + ConsoleHost), 'the console host is aliased')
+        assert.ok(hosts.includes('127.0.0.1 ' + IdpHost), 'the idp host is aliased')
         assert.equal(w.Context.Get(JourneyKeys.PlexusState), JourneyState.PlexusSignedIn)
-        assert.ok(!w.Evidence.Sink.Lines.some(l => l.includes(password)))
+        assert.ok(!w.Evidence.Sink.Lines.some(l => l.includes(w.Identity.Password)))
         w.Dispose()
+    })
+
+    it('uses the PLEXUS_JOURNEY_REALM_ISSUER override verbatim for the realm issuer', async () =>
+    {
+        const w = new PlexusWorld()
+        const previous = process.env['PLEXUS_JOURNEY_REALM_ISSUER']
+        process.env['PLEXUS_JOURNEY_REALM_ISSUER'] = 'https://pinned.example/realms/pinned'
+        try
+        {
+            await w.Leg().Run(w.Context)
+            assert.equal(w.Executor.Spawns[0].Options.Env['PLEXUS_E2E_REALM_ISSUER'], 'https://pinned.example/realms/pinned')
+        }
+        finally
+        {
+            if (previous === undefined)
+            {
+                delete process.env['PLEXUS_JOURNEY_REALM_ISSUER']
+            }
+            else
+            {
+                process.env['PLEXUS_JOURNEY_REALM_ISSUER'] = previous
+            }
+            w.Dispose()
+        }
     })
 
     it('fails with the redacted output tail on a non-zero exit', async () =>
     {
         const w = new PlexusWorld()
-        const password = w.Identity.StaffPassword(StaffSignInLeg.EmailFor(RunId))
+        const password = w.Identity.Password
         w.Executor.Code = 1
         w.Executor.Stdout = 'x'.repeat(10000) + ' the deploy broke ' + password
         await assert.rejects(() => w.Leg().Run(w.Context), (error: Error) =>

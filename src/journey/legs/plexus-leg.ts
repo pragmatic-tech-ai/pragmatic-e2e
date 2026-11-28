@@ -6,7 +6,7 @@ import type { JourneyContext } from '../journey-context.js'
 import { JourneyDependency } from '../journey-dependency.js'
 import type { IJourneyLeg } from '../journey-leg.js'
 import type { IEngineClusterSource } from '../live/engine-secrets.js'
-import { HostedCluster, type HostAliases } from '../live/hosted-cluster.js'
+import type { HostAliases } from '../live/hosted-cluster.js'
 import type { JourneyIdentity } from '../live/journey-identity.js'
 import { ProcessOptions, type IProcessExecutor } from '../live/process-runner.js'
 import { WaitAbortError } from '../waiter.js'
@@ -15,11 +15,11 @@ import { StaffSignInLeg } from './staff-sign-in-leg.js'
 
 /**
  * Leg 8: Plexus realm-native sign-in and deploy (C5.1 (b)). Runs Plexus's own Electron journey spec
- * (apps/plexus/e2e/journey) against the live hosted environment's realm: the staff account created by the staff
- * sign-in leg signs in to the environment `journey`'s realm natively, deploys a graph and reads it back. The env realm's
- * host (`journey.<console host>`) is aliased to the loopback in /etc/hosts, where the place-hosted leg's port-forward
- * still listens; the hosted development CA becomes NODE_EXTRA_CA_CERTS so the Plexus main process trusts the realm's
- * certificate. The staff password goes to a private temp file (never an environment value, never logged). Clean has
+ * (apps/plexus/e2e/journey) against the live hosted environment's realm: the central registered customer identity
+ * signs in through platform discovery against the real platform, then the hosted console names its realm. The console and
+ * idp hosts are aliased to the loopback in /etc/hosts, where the place-hosted leg's port-forward (including 443) listens;
+ * the hosted development CA is handed to the canonical launcher, which trusts it for the Plexus main process. The central
+ * password goes to a private temp file (never an environment value, never logged). Clean has
  * nothing to undo: the hive's teardown removes the environment and the place-hosted leg removes the host aliases.
  */
 export class PlexusLeg implements IJourneyLeg
@@ -35,27 +35,31 @@ export class PlexusLeg implements IJourneyLeg
     private static readonly SpecTimeoutMs = 14 * 60_000
     private static readonly TempPrefix = 'journey-plexus-'
     private static readonly CaFileName = 'hosted-ca.pem'
-    private static readonly PasswordFileName = 'staff-password'
+    private static readonly PasswordFileName = 'owner-password'
     private static readonly PrivateMode = 0o600
     private static readonly Encoding = 'utf8'
     private static readonly HttpsScheme = 'https://'
-    private static readonly WssScheme = 'wss://'
-    private static readonly HostSeparator = '.'
-    private static readonly PortSeparator = ':'
+    private static readonly RealmsSegment = '/realms/'
     private static readonly Redacted = '[redacted]'
     private static readonly TailChars = 4000
     private static readonly EnvJourneyFlag = 'SP_JOURNEY_E2E'
-    private static readonly EnvEmail = 'PLEXUS_JOURNEY_EMAIL'
-    private static readonly EnvPasswordFile = 'PLEXUS_JOURNEY_PASSWORD_FILE'
-    private static readonly EnvPlatformAddress = 'PLEXUS_PLATFORM_ADDRESS'
-    private static readonly EnvRuntimeWs = 'PLEXUS_JOURNEY_RUNTIME_WS_URL'
-    private static readonly EnvExtraCa = 'NODE_EXTRA_CA_CERTS'
+    private static readonly EnvSignIn = 'PLEXUS_E2E_SIGN_IN'
+    private static readonly EnvPlatformAddress = 'PLEXUS_E2E_PLATFORM_ADDRESS'
+    private static readonly EnvOwnerEmail = 'PLEXUS_E2E_OWNER_EMAIL'
+    private static readonly EnvOwnerPasswordFile = 'PLEXUS_E2E_OWNER_PASSWORD_FILE'
+    private static readonly EnvDesktopCaFile = 'PLEXUS_E2E_DESKTOP_CA_FILE'
+    private static readonly EnvIdpCaFile = 'PLEXUS_E2E_IDP_CA_FILE'
+    private static readonly EnvRealmIssuer = 'PLEXUS_E2E_REALM_ISSUER'
+    private static readonly EnvEnvironment = 'PLEXUS_JOURNEY_ENVIRONMENT'
+    /** Live-iteration seam: when set and non-empty, pins the realm issuer verbatim. */
+    private static readonly EnvRealmIssuerOverride = 'PLEXUS_JOURNEY_REALM_ISSUER'
     private static readonly FlagOn = '1'
+    private static readonly SignInRealm = 'realm'
     private static readonly RepoMissing = 'the Plexus repository is not configured: set PRAGMATIC_PLEXUS_REPO to its checkout'
     private static readonly SpecFailed = 'the Plexus journey spec failed with code '
     private static readonly OutputTail = '; output tail: '
-    private static readonly Started = 'ran the Plexus journey spec against the environment realm at '
-    private static readonly Passed = 'Plexus signed in realm-native as the staff account and deployed and read a graph: '
+    private static readonly Started = 'ran the Plexus journey spec against the hosted realm via the console at '
+    private static readonly Passed = 'Plexus signed in realm-native as the central identity and deployed and read a graph: '
     private static readonly NothingToClean = 'nothing to undo: the hive teardown removes the environment and place-hosted removes the host aliases'
 
     public constructor(
@@ -65,6 +69,7 @@ export class PlexusLeg implements IJourneyLeg
         private readonly evidence: Evidence,
         hiveDependency: JourneyDependency,
         private readonly aliases: HostAliases,
+        private readonly platformAddress: string,
         private readonly plexusRepo: string | undefined)
     {
         this.Dependencies = [JourneyDependency.EntitlementDelivery, hiveDependency, JourneyDependency.PlexusRealmSignIn]
@@ -77,11 +82,15 @@ export class PlexusLeg implements IJourneyLeg
         {
             throw new WaitAbortError(L.RepoMissing)
         }
-        const envHost = StaffSignInLeg.Environment + L.HostSeparator + context.Require(JourneyKeys.ConsoleHost)
-        const address = envHost + L.PortSeparator + HostedCluster.ConsolePort
-        this.aliases.Add([envHost])
-        const email = StaffSignInLeg.EmailFor(context.RunId)
-        const password = this.identity.StaffPassword(email)
+        const consoleHost = context.Require(JourneyKeys.ConsoleHost)
+        const idpHost = context.Require(JourneyKeys.IdpHost)
+        const overridden = process.env[L.EnvRealmIssuerOverride]
+        const realmIssuer = overridden !== undefined && overridden.length > 0
+            ? overridden
+            : L.HttpsScheme + idpHost + L.RealmsSegment + context.Require(JourneyKeys.Tenant)
+        this.aliases.Add([consoleHost, idpHost])
+        const email = this.identity.Email
+        const password = this.identity.Password
         const folder = mkdtempSync(join(tmpdir(), L.TempPrefix))
         try
         {
@@ -92,14 +101,17 @@ export class PlexusLeg implements IJourneyLeg
             const env = {
                 ...process.env,
                 [L.EnvJourneyFlag]: L.FlagOn,
-                [L.EnvEmail]: email,
-                [L.EnvPasswordFile]: passwordFile,
-                [L.EnvPlatformAddress]: L.HttpsScheme + address,
-                [L.EnvRuntimeWs]: L.WssScheme + address,
-                [L.EnvExtraCa]: caFile,
+                [L.EnvSignIn]: L.SignInRealm,
+                [L.EnvPlatformAddress]: this.platformAddress,
+                [L.EnvOwnerEmail]: email,
+                [L.EnvOwnerPasswordFile]: passwordFile,
+                [L.EnvDesktopCaFile]: caFile,
+                [L.EnvIdpCaFile]: caFile,
+                [L.EnvRealmIssuer]: realmIssuer,
+                [L.EnvEnvironment]: StaffSignInLeg.Environment,
             }
             const result = await this.executor.Execute(L.Program, L.SpecArgv, new ProcessOptions(join(this.plexusRepo, L.AppFolder), env), L.SpecTimeoutMs)
-            this.evidence.Step(this.Name, L.Started + address)
+            this.evidence.Step(this.Name, L.Started + consoleHost)
             if (!result.Ok)
             {
                 const tail = (result.Stdout + result.Stderr).split(password).join(L.Redacted).slice(-L.TailChars)
