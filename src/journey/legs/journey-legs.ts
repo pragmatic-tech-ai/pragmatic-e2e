@@ -18,7 +18,7 @@ import { CustomerCluster } from '../live/customer-cluster.js'
 import { FixedEngineClusterSource } from '../live/engine-secrets.js'
 import { HostedClusters, HostedEngineClusterSource } from '../live/hosted-cluster.js'
 import type { JourneyIdentity } from '../live/journey-identity.js'
-import { NodeProcessRunner, type IProcessRunner, type IProcessStarter } from '../live/process-runner.js'
+import { NodeProcessRunner, type IProcessExecutor, type IProcessRunner, type IProcessStarter } from '../live/process-runner.js'
 import { LegAbort, type Waiter } from '../waiter.js'
 import { LazyJourneyDns } from '../live/journey-dns.js'
 import { DomainLeg } from './domain-leg.js'
@@ -26,6 +26,8 @@ import { JourneyLegName } from './journey-keys.js'
 import { InstallAndEnrolLeg } from './install-and-enrol-leg.js'
 import { PlaceHostedLeg } from './place-hosted-leg.js'
 import { PayLeg } from './pay-leg.js'
+import { DeployGraphsLeg } from './deploy-graphs-leg.js'
+import { PlexusLeg } from './plexus-leg.js'
 import { PendingLeg } from './pending-leg.js'
 import { StaffSignInLeg } from './staff-sign-in-leg.js'
 import { RegisterLeg, type IUncleanedRuns } from './register-leg.js'
@@ -46,7 +48,9 @@ export class JourneyLegInputs
         public readonly Abort: LegAbort = new LegAbort(),
         public readonly Runner: IProcessRunner = new NodeProcessRunner(),
         public readonly Trust: IConsoleTrust = new ConsoleTrust(),
-        public readonly Starter: IProcessStarter = new NodeProcessRunner())
+        public readonly Starter: IProcessStarter = new NodeProcessRunner(),
+        public readonly Executor: IProcessExecutor = new NodeProcessRunner(),
+        public readonly PlexusRepo: string | undefined = process.env.PRAGMATIC_PLEXUS_REPO)
     {
     }
 }
@@ -80,6 +84,16 @@ export class JourneyLegs
         const domain: IJourneyLeg[] = path === JourneyPath.Hosted
             ? []
             : [new DomainLeg(new CabinetDomainsPage(session, cabinet, inputs.Waiter), new LazyJourneyDns(config), inputs.Evidence)]
+        // Plexus and the graph check are the Hosted (b) proof; the other paths keep their places pending.
+        const later: IJourneyLeg[] = path === JourneyPath.Hosted
+            ? [
+                new PlexusLeg(engine, inputs.Identity, inputs.Executor, inputs.Evidence, hiveDependency, hostedClusters.Aliases, inputs.PlexusRepo),
+                new DeployGraphsLeg(inputs.Browser, engine, inputs.Trust, inputs.Waiter, inputs.Evidence, hiveDependency),
+            ]
+            : [
+                new PendingLeg(N.Plexus, [D.EntitlementDelivery, hiveDependency, D.PlexusRealmSignIn]),
+                new PendingLeg(N.DeployGraphs, [D.EntitlementDelivery, hiveDependency, D.PlexusRealmSignIn]),
+            ]
         return [
             new VisitLeg(inputs.Browser, new WebsitePage(config.WebsiteUrl, config.CabinetUrl), inputs.Evidence),
             new RegisterLeg(session, cabinet, login, new CentralAccount(config.CentralIssuer), inputs.Identity, inputs.CampaignCode, inputs.Uncleaned, inputs.Waiter, inputs.Evidence),
@@ -88,8 +102,7 @@ export class JourneyLegs
             hive,
             ...domain,
             new StaffSignInLeg(inputs.Browser, engine, inputs.Trust, inputs.Identity, inputs.Waiter, inputs.Evidence, hiveDependency),
-            new PendingLeg(N.Plexus, [D.EntitlementDelivery, hiveDependency, D.PlexusRealmSignIn]),
-            new PendingLeg(N.DeployGraphs, [D.EntitlementDelivery, hiveDependency, D.PlexusRealmSignIn]),
+            ...later,
         ]
     }
 }

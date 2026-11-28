@@ -25,6 +25,8 @@ export class JourneyKeys
     public static readonly EnvironmentState = 'environmentState'
     public static readonly StaffEmail = 'staffEmail'
     public static readonly StaffState = 'staffState'
+    public static readonly PlexusState = 'plexusState'
+    public static readonly GraphsState = 'graphsState'
 }
 
 /** The values the state keys take. */
@@ -50,6 +52,8 @@ export enum JourneyState
     StaffCreated = 'staff-created',
     StaffSignedIn = 'staff-signed-in',
     StaffDisabled = 'staff-disabled',
+    PlexusSignedIn = 'plexus-signed-in',
+    GraphsListed = 'graphs-listed',
 }
 
 /** The leg names, in run order (the report's rows and the context's started/completed lists). */

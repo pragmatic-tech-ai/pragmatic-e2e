@@ -20,6 +20,20 @@ export interface IProcessRunner
     Run(program: string, argv: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<ProcessResult>
 }
 
+/** Where and with what environment a program runs. */
+export class ProcessOptions
+{
+    public constructor(public readonly Cwd: string, public readonly Env: Readonly<Record<string, string | undefined>>)
+    {
+    }
+}
+
+/** Runs a program in a working directory with an environment, capturing its output; a fake in leg tests. */
+export interface IProcessExecutor
+{
+    Execute(program: string, argv: readonly string[], options: ProcessOptions | undefined, timeoutMs: number, signal?: AbortSignal): Promise<ProcessResult>
+}
+
 /** A program started and left running (a port-forward): stopped by the owner, awaited until it exited. */
 export interface IRunningProcess
 {
@@ -79,7 +93,7 @@ class NodeRunningProcess implements IRunningProcess
  * before the child is gone, so the call waits for the child's own exit before it settles: nothing outlives it. Never
  * throws for a failed program.
  */
-export class NodeProcessRunner implements IProcessRunner, IProcessStarter
+export class NodeProcessRunner implements IProcessRunner, IProcessStarter, IProcessExecutor
 {
     private static readonly MaxBuffer = 32 * 1024 * 1024
     private static readonly Encoding = 'utf8'
@@ -96,10 +110,15 @@ export class NodeProcessRunner implements IProcessRunner, IProcessStarter
 
     public Run(program: string, argv: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<ProcessResult>
     {
+        return this.Execute(program, argv, undefined, timeoutMs, signal)
+    }
+
+    public Execute(program: string, argv: readonly string[], options: ProcessOptions | undefined, timeoutMs: number, signal?: AbortSignal): Promise<ProcessResult>
+    {
         const N = NodeProcessRunner
         return new Promise(resolve =>
         {
-            const child = execFile(program, [...argv], { encoding: N.Encoding, maxBuffer: N.MaxBuffer, timeout: timeoutMs, windowsHide: true, signal, killSignal: N.KillSignal }, (error, stdout, stderr) =>
+            const child = execFile(program, [...argv], { encoding: N.Encoding, maxBuffer: N.MaxBuffer, timeout: timeoutMs, windowsHide: true, signal, killSignal: N.KillSignal, cwd: options?.Cwd, env: options === undefined ? undefined : { ...options.Env } }, (error, stdout, stderr) =>
             {
                 const code = error === null ? 0 : typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : N.Failed
                 const result = new ProcessResult(code, stdout, stderr)

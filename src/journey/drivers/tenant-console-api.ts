@@ -18,6 +18,7 @@ export class TenantConsoleApi
     private static readonly EnvironmentsRoot = '/tenant-api/environments/'
     private static readonly SnapshotLeaf = '/admin/snapshot'
     private static readonly AccountsLeaf = '/admin/accounts'
+    private static readonly GraphsLeaf = '/graphs'
     private static readonly GrantsLeaf = '/admin/grants'
     private static readonly Slash = '/'
     private static readonly Get = 'GET'
@@ -59,6 +60,19 @@ export class TenantConsoleApi
         }
         await page.RequestJson(L.Delete, this.Route(environment) + L.AccountsLeaf + L.Slash + encodeURIComponent(principalId))
         return true
+    }
+
+    /** The graphs the environment lists as deployed (an array, or an object holding `graphs`); empty when none. */
+    public async ListGraphs(page: IJourneyPage, environment: string): Promise<unknown[]>
+    {
+        const L = TenantConsoleApi
+        const answer = await page.RequestJson(L.Get, this.Route(environment) + L.GraphsLeaf) as unknown
+        if (Array.isArray(answer))
+        {
+            return answer
+        }
+        const graphs = (answer as { graphs?: unknown } | null)?.graphs
+        return Array.isArray(graphs) ? graphs : []
     }
 
     private Route(environment: string): string

@@ -72,4 +72,17 @@ describe('TenantConsoleApi', () =>
         await w.Api.GrantRole(w.Page, 'a b', 'p', 'Admin')
         assert.equal(w.Page.RequestJsonCalls[0].Path, '/tenant-api/environments/a%20b/admin/grants')
     })
+
+    it('ListGraphs reads the environment graphs from an array or a graphs object, empty otherwise', async () =>
+    {
+        const w = new ApiWorld()
+        const path = 'GET /tenant-api/environments/journey/graphs'
+        assert.deepEqual(await w.Api.ListGraphs(w.Page, Env), [])
+        w.Page.RequestJsonResponses.set(path, [{ name: 'g1' }])
+        assert.equal((await w.Api.ListGraphs(w.Page, Env)).length, 1)
+        w.Page.RequestJsonResponses.set(path, { graphs: [{ name: 'g1' }, { name: 'g2' }] })
+        assert.equal((await w.Api.ListGraphs(w.Page, Env)).length, 2)
+        w.Page.RequestJsonResponses.set(path, { other: 1 })
+        assert.deepEqual(await w.Api.ListGraphs(w.Page, Env), [])
+    })
 })

@@ -12,6 +12,7 @@ import { OwnerSignIn, type IEngineClusterSource } from '../live/engine-secrets.j
 import type { JourneyIdentity } from '../live/journey-identity.js'
 import type { Waiter } from '../waiter.js'
 import { DomainLeg } from './domain-leg.js'
+import { ConsoleSession } from './console-session.js'
 import { JourneyKeys, JourneyLegName, JourneyState } from './journey-keys.js'
 
 /**
@@ -38,11 +39,6 @@ export class StaffSignInLeg implements IJourneyLeg
     public static readonly Environment = 'journey'
     private static readonly Staff = 'staff@'
     private static readonly PrincipalPrefix = 'staff-'
-    private static readonly MapPrefix = 'MAP '
-    private static readonly MapSeparator = ','
-    private static readonly Loopback = '127.0.0.1'
-    private static readonly PortColon = ':'
-    private static readonly HostTargetSpace = ' '
     private static readonly OwnerSignedIn = 'the Owner signed in to the engine console with the engine\'s initial sign-in'
     private static readonly EnvironmentCreated = 'created the environment (the Owner creates it; accounts and grants are scoped to one): '
     private static readonly EnvironmentResumed = 'resumed: the environment is already listed: '
@@ -90,10 +86,9 @@ export class StaffSignInLeg implements IJourneyLeg
         // Recorded before anything is created, so a killed run's clean names the account.
         context.Set(JourneyKeys.StaffEmail, email)
         const password = this.identity.StaffPassword(email)
-        const pins = await this.Pins(context)
-        const rules = this.ResolverRules(context)
-        const owner = await this.browser.ConsolePage(pins, rules)
-        const engine = this.Engine(context)
+        const session = this.Session(context)
+        const owner = await this.browser.ConsolePage(await session.Pins(), session.ResolverRules())
+        const engine = session.Engine()
         await this.SignInWithDiagnostics(engine, owner, () => this.clusters.For(context).Owner())
         this.evidence.Step(this.Name, L.OwnerSignedIn)
         // Recorded before it is created, so a killed run's clean names it.
@@ -149,8 +144,9 @@ export class StaffSignInLeg implements IJourneyLeg
             this.evidence.Step(this.Name, L.NotListed + email)
             return
         }
-        const owner = await this.browser.ConsolePage(await this.Pins(context), this.ResolverRules(context))
-        const engine = this.Engine(context)
+        const session = this.Session(context)
+        const owner = await this.browser.ConsolePage(await session.Pins(), session.ResolverRules())
+        const engine = session.Engine()
         await this.SignInWithDiagnostics(engine, owner, () => this.clusters.For(context).Owner())
         const environment = context.Get(JourneyKeys.Environment) ?? L.Environment
         if (!await this.OnConsole(owner, () => this.api.AccountExists(owner, environment, email)))
@@ -161,6 +157,11 @@ export class StaffSignInLeg implements IJourneyLeg
         const disabled = await this.OnConsole(owner, () => this.api.DisableAccount(owner, environment, L.PrincipalPrefix + context.RunId))
         context.Set(JourneyKeys.StaffState, JourneyState.StaffDisabled)
         this.evidence.Step(this.Name, (disabled ? L.Disabled : L.WasDisabled) + email)
+    }
+
+    private Session(context: JourneyContext): ConsoleSession
+    {
+        return new ConsoleSession(context, this.trust, this.clusters, this.waiter)
     }
 
     /** Signs in through the diagnostic wrapper, so a stuck sign-in records the real landing. */
@@ -189,30 +190,5 @@ export class StaffSignInLeg implements IJourneyLeg
         this.evidence.Step(this.Name, StaffSignInLeg.DiagnosticUrl + page.Url())
         this.evidence.Step(this.Name, StaffSignInLeg.DiagnosticBody + await page.BodyText())
         await this.evidence.FailureScreenshot(this.Name, page.ScreenshotPage())
-    }
-
-    private Engine(context: JourneyContext): EngineConsolePage
-    {
-        return new EngineConsolePage(context.Require(JourneyKeys.ConsoleUrl), context.Require(JourneyKeys.ConsoleHost), this.waiter)
-    }
-
-    /**
-     * Chromium host-resolver rules mapping the console and sign-in hosts (any port) to the loopback the console URL
-     * names: the hosted reach is a port-forward on 127.0.0.1, and Chromium's resolver ignores /etc/hosts; mapping every
-     * port also catches a realm redirect to :443.
-     */
-    private ResolverRules(context: JourneyContext): string
-    {
-        const L = StaffSignInLeg
-        const target = L.Loopback + L.PortColon + new URL(context.Require(JourneyKeys.ConsoleUrl)).port
-        return [context.Require(JourneyKeys.ConsoleHost), context.Require(JourneyKeys.IdpHost)]
-            .map(host => L.MapPrefix + host + L.HostTargetSpace + target)
-            .join(L.MapSeparator)
-    }
-
-    /** The certificate keys the console's browser (the console URL's port: the customer ingress's, or the hosted port-forward's) accepts: exactly the console's and the sign-in service's, chained to the engine's CA. */
-    private async Pins(context: JourneyContext): Promise<string[]>
-    {
-        return this.trust.Pins([context.Require(JourneyKeys.ConsoleHost), context.Require(JourneyKeys.IdpHost)], Number(new URL(context.Require(JourneyKeys.ConsoleUrl)).port), await this.clusters.For(context).DevCa())
     }
 }
