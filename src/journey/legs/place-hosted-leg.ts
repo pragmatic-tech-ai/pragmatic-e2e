@@ -4,6 +4,8 @@ import type { Evidence } from '../evidence.js'
 import type { JourneyContext } from '../journey-context.js'
 import { JourneyDependency } from '../journey-dependency.js'
 import type { IJourneyLeg } from '../journey-leg.js'
+import type { IConsoleTrust } from '../live/console-trust.js'
+import { HostedCluster, type ConsoleReach, type HostedClusters } from '../live/hosted-cluster.js'
 import type { IProcessRunner } from '../live/process-runner.js'
 import { WaitObservation, type Waiter } from '../waiter.js'
 import { JourneyKeys, JourneyLegName, JourneyState } from './journey-keys.js'
@@ -18,15 +20,20 @@ interface HostedHiveView
 }
 
 /**
- * Leg 5b (scratch, C5.1 Task 6 Steps 2-3 live proof; not committed). The customer asks for a Hosted hive through the
- * customer API (`start-enrolment` level hosted), which the cabinet UI does not offer for that level, so the leg calls
- * the same `/api/cabinet/` operations the cabinet client calls, from inside the signed-in page (its session cookies).
- * The platform schedules the placement onto the host agent, which builds a kind cluster `pragmatic-hosted-<placement>`,
- * installs the engine chart (hosted=true), and the hive enrols itself and reports Healthy; the leg then requests an
- * environment, which the platform pushes to the Hosted hive over the per-cluster credential, and waits for the hive to
- * report it ready. Step 3: it leaves that hive (its cluster is torn down), then starts a second placement and restarts
- * the host-agent container while that cluster is building, proving the placement resumes and completes once (exactly
- * one hosted hive), then leaves it too. Clean leaves any hosted hive of the run's client that is still live.
+ * Leg 5b (scratch, C5.1 Task 6 live proof; not committed). The customer asks for a Hosted hive through the customer API
+ * (`start-enrolment` level hosted), which the cabinet UI does not offer for that level, so the leg calls the same
+ * `/api/cabinet/` operations the cabinet client calls, from inside the signed-in page (its session cookies). The platform
+ * schedules the placement onto the host agent, which builds a kind cluster `pragmatic-hosted-<placement>`, installs the
+ * engine chart (hosted=true), and the hive enrols itself and reports Healthy.
+ *
+ * ONE hosted hive is kept alive for the legs after this one (staff sign-in, Plexus, deploy): Run does not leave it. To make
+ * its console reachable from the journey's WSL host, Run reads the console and sign-in hosts from the cluster's
+ * Ingresses, aliases both to the loopback in /etc/hosts, starts a kubectl port-forward to ingress-nginx (the leg instance
+ * holds it until Clean) and checks the console's certificate chains to the engine's development CA through it; the
+ * context then names ConsoleUrl, ConsoleHost, IdpHost and the placement (JourneyKeys.HostedPlacement), which the later
+ * legs read. (The host-agent restart-mid-build recovery, open (a), is proven live separately, not in this journey.)
+ * Clean stops the forward, removes the aliases, then leaves any hosted hive of the run's client still live (the host agent
+ * tears its cluster down).
  */
 export class PlaceHostedLeg implements IJourneyLeg
 {
@@ -34,9 +41,7 @@ export class PlaceHostedLeg implements IJourneyLeg
     public readonly Dependencies = [JourneyDependency.Cabinet, JourneyDependency.CentralLogin, JourneyDependency.EntitlementDelivery, JourneyDependency.HostedPlacement]
 
     public static readonly PlacedBudgetMs = 12 * 60_000
-    public static readonly ReadyBudgetMs = 6 * 60_000
     public static readonly GoneBudgetMs = 6 * 60_000
-    public static readonly BuildingBudgetMs = 4 * 60_000
     public readonly DeadlineMs = 45 * 60_000
     private static readonly SlowIntervalMs = 15_000
     private static readonly FastIntervalMs = 5_000
@@ -45,38 +50,25 @@ export class PlaceHostedLeg implements IJourneyLeg
     private static readonly AccountOp = '/api/cabinet/account'
     private static readonly StartEnrolmentOp = '/api/cabinet/start-enrolment'
     private static readonly ListHivesOp = '/api/cabinet/list-hives'
-    private static readonly RequestEnvironmentOp = '/api/cabinet/request-environment'
     private static readonly LeaveHiveOp = '/api/cabinet/leave-hive'
 
     private static readonly ClientIdField = 'ClientId'
     private static readonly TenantIdField = 'TenantId'
     private static readonly LevelField = 'Level'
     private static readonly HiveIdField = 'HiveId'
-    private static readonly EnvironmentField = 'Environment'
-    private static readonly PurposeField = 'Purpose'
 
     private static readonly HostedLevel = 'hosted'
     private static readonly HealthyHealth = 'healthy'
     private static readonly GoneHealth = 'gone'
     private static readonly HiveIdPrefix = 'hv'
-    private static readonly EnvironmentName = 'journey'
-    private static readonly DevelopmentPurpose = 'development'
 
     private static readonly Docker = 'docker'
-    private static readonly HostAgentContainer = 'pragmatic-host-agent'
     private static readonly PsArgs: readonly string[] = ['ps', '--format', '{{.Names}}']
-    private static readonly RestartArgs: readonly string[] = ['restart', PlaceHostedLeg.HostAgentContainer]
     private static readonly ClusterPrefix = 'pragmatic-hosted-'
-    private static readonly ControlPlaneSuffix = '-control-plane'
     private static readonly NewLine = /\r?\n/
 
-    private static readonly PlacementAKey = 'hostedPlacementA'
-    private static readonly PlacementBKey = 'hostedPlacementB'
-    private static readonly HiveAKey = 'hostedHiveA'
-    private static readonly HiveBKey = 'hostedHiveB'
 
     private static readonly PlacementIdField = 'PlacementId'
-    private static readonly IntentIdField = 'IntentId'
     private static readonly ClientField = 'Client'
     private static readonly HivesField = 'Hives'
 
@@ -85,29 +77,33 @@ export class PlaceHostedLeg implements IJourneyLeg
     private static readonly PlacedHealthyPrefix = 'the host agent placed the hive and it reports Healthy: '
     private static readonly ClusterOpen = ' (cluster '
     private static readonly ClusterClose = ')'
-    private static readonly RequestedPrefix = 'requested environment `journey` on the Hosted hive; intent '
-    private static readonly PushedReady = 'the platform pushed environment `journey` to the Hosted hive over the per-cluster credential; the hive reports it ready'
     private static readonly LeftPrefix = 'left the Hosted hive '
     private static readonly ClusterGoneSuffix = '; its cluster is gone: '
-    private static readonly SecondPlacementPrefix = 'started a second Hosted placement; placement '
-    private static readonly RestartedMidBuild = 'restarted the host agent while it was building cluster '
-    private static readonly ResumedHealthyPrefix = 'after the restart the placement resumed and completed once; the hive is Healthy: '
-    private static readonly DuplicatePrefix = 'more than one hosted hive after the restart (the placement ran twice): '
-    private static readonly ListSeparator = ', '
+    private static readonly ReachBudgetMs = 3 * 60_000
+    private static readonly HostsCondition = 'the hosted cluster to list its console and sign-in ingresses'
+    private static readonly ReachCondition = 'the console to answer through the port-forward with a certificate that chains to the engine CA'
+    private static readonly ReachedPrefix = 'the console is reachable through a port-forward to ingress-nginx: '
+    private static readonly ReachedPort = ' on local port '
+    private static readonly ReachedAliases = '; /etc/hosts aliases for '
+    private static readonly HostSeparator = ', '
+    private static readonly ReachStopped = 'stopped the console port-forward and removed the /etc/hosts aliases'
+    private static readonly ClusterGonePrefix = 'its cluster is gone: '
     private static readonly NoClient = 'no client recorded; nothing to leave'
     private static readonly NothingToLeave = 'no live hosted hive of the run is left to leave'
     private static readonly CleanLeftPrefix = 'left a hosted hive at clean: '
     private static readonly PlacedCondition = 'the host agent to place the hive and report it Healthy'
-    private static readonly ReadyCondition = 'the Hosted hive to report environment `journey` ready'
     private static readonly GoneCondition = 'the cabinet to stop listing the hive '
     private static readonly ClusterGoneCondition = 'the host agent to tear down cluster '
-    private static readonly BuildingCondition = 'the host agent to start building cluster '
+
+    private reach: ConsoleReach | undefined
 
     public constructor(
         private readonly session: CustomerSession,
         private readonly runner: IProcessRunner,
         private readonly waiter: Waiter,
-        private readonly evidence: Evidence)
+        private readonly evidence: Evidence,
+        private readonly clusters: HostedClusters,
+        private readonly trust: IConsoleTrust)
     {
     }
 
@@ -119,40 +115,26 @@ export class PlaceHostedLeg implements IJourneyLeg
         const page = await this.session.AccountPage(clientName)
         const clientId = await this.ClientId(page)
 
-        // Step 2: a Hosted placement, Healthy, and a pushed environment.
-        const placementA = await this.Placement(context, page, clientId, tenant, L.PlacementAKey, L.StartedHostedPrefix)
-        const hiveA = await this.WaitHealthy(page, clientId)
-        context.Set(L.HiveAKey, hiveA)
-        context.Set(JourneyKeys.Hive, hiveA)
+        // A Hosted placement, Healthy; the hive then stays alive for the later legs (Clean leaves it).
+        const placement = await this.Placement(context, page, clientId, tenant, JourneyKeys.HostedPlacement, L.StartedHostedPrefix)
+        const hive = await this.WaitHealthy(page, clientId)
+        context.Set(JourneyKeys.Hive, hive)
         context.Set(JourneyKeys.HiveState, JourneyState.HiveEnrolled)
-        this.evidence.Step(this.Name, L.PlacedHealthyPrefix + hiveA + L.ClusterOpen + L.ClusterPrefix + placementA + L.ClusterClose)
+        this.evidence.Step(this.Name, L.PlacedHealthyPrefix + hive + L.ClusterOpen + L.ClusterPrefix + placement + L.ClusterClose)
         // A Hosted hive is push-managed: environments are applied by the platform (the operator control-plane route,
         // gated on HiveReach.Pushable), not by the customer's request-environment, which a push hive refuses
-        // (hive-takes-no-intents). The platform env-push is proven as an operator step, not in this customer leg.
-
-        // Step 3: leave A (one slot), then a second placement with a restart mid-build.
-        await this.LeaveAndWait(page, clientId, hiveA, placementA)
-        this.evidence.Step(this.Name, L.LeftPrefix + hiveA + L.ClusterGoneSuffix + L.ClusterPrefix + placementA)
-        const placementB = await this.Placement(context, page, clientId, tenant, L.PlacementBKey, L.SecondPlacementPrefix)
-        await this.WaitClusterBuilding(placementB)
-        await this.RestartHostAgent()
-        this.evidence.Step(this.Name, L.RestartedMidBuild + L.ClusterPrefix + placementB)
-        const hiveB = await this.WaitHealthy(page, clientId)
-        context.Set(L.HiveBKey, hiveB)
-        context.Set(JourneyKeys.Hive, hiveB)
-        const live = (await this.ListHives(page, clientId)).filter(hive => this.IsLiveHosted(hive))
-        if (live.length !== 1)
-        {
-            throw new Error(L.DuplicatePrefix + live.map(hive => hive.HiveId).join(L.ListSeparator))
-        }
-        this.evidence.Step(this.Name, L.ResumedHealthyPrefix + hiveB)
-        await this.LeaveAndWait(page, clientId, hiveB, placementB)
-        this.evidence.Step(this.Name, L.LeftPrefix + hiveB + L.ClusterGoneSuffix + L.ClusterPrefix + placementB)
+        // (hive-takes-no-intents). The staff sign-in leg creates the environment through the hive's own console.
+        await this.ReachConsole(context, placement)
     }
 
     public async Clean(context: JourneyContext): Promise<void>
     {
         const L = PlaceHostedLeg
+        await this.reach?.Stop()
+        this.reach = undefined
+        // By marker, so a killed run's leftover aliases go too.
+        this.clusters.Aliases.Remove()
+        this.evidence.Step(this.Name, L.ReachStopped)
         const clientName = context.Get(JourneyKeys.ClientName)
         if (clientName === undefined)
         {
@@ -173,6 +155,44 @@ export class PlaceHostedLeg implements IJourneyLeg
             await this.WaitGone(page, clientId, hive.HiveId)
             this.evidence.Step(this.Name, L.CleanLeftPrefix + hive.HiveId)
         }
+        const placement = context.Get(JourneyKeys.HostedPlacement)
+        if (placement !== undefined)
+        {
+            await this.WaitClusterGone(placement)
+            this.evidence.Step(this.Name, L.ClusterGonePrefix + L.ClusterPrefix + placement)
+        }
+    }
+
+    /**
+     * Makes the placed hive's console reachable: its hosts from the Ingresses, loopback aliases for them, a port-forward
+     * to ingress-nginx (kept on this leg), and a TLS check through it against the engine's development CA.
+     */
+    private async ReachConsole(context: JourneyContext, placement: string): Promise<void>
+    {
+        const L = PlaceHostedLeg
+        const hosted = this.clusters.For(placement)
+        await hosted.EnsureKubeconfig()
+        const hosts = await this.waiter.Until(L.HostsCondition, async () =>
+        {
+            const console = await hosted.ConsoleHost()
+            const idp = await hosted.IdpHost()
+            return console !== undefined && idp !== undefined ? WaitObservation.Met({ Console: console, Idp: idp }, console + L.HostSeparator + idp) : WaitObservation.NotYet<{ Console: string, Idp: string }>(L.NotYet)
+        }, L.ReachBudgetMs, L.FastIntervalMs)
+        const port = HostedCluster.ConsolePort
+        hosted.AddHostAliases([hosts.Console, hosts.Idp])
+        await this.reach?.Stop()
+        this.reach = hosted.StartConsoleReach(port)
+        context.Set(JourneyKeys.ConsoleHost, hosts.Console)
+        context.Set(JourneyKeys.IdpHost, hosts.Idp)
+        context.Set(JourneyKeys.ConsoleUrl, HostedCluster.ConsoleUrl(hosts.Console, port))
+        // The forward needs a moment to listen; the check doubles as the wait for it.
+        await this.waiter.Until(L.ReachCondition, async () =>
+        {
+            const pins = await this.trust.Pins([hosts.Console, hosts.Idp], port, await hosted.DevCa())
+            return WaitObservation.Met(pins, String(pins.length))
+        }, L.ReachBudgetMs, L.FastIntervalMs)
+        context.Set(JourneyKeys.ConsoleTrusted, JourneyState.ConsoleTrusted)
+        this.evidence.Step(this.Name, L.ReachedPrefix + hosts.Console + L.ReachedPort + port + L.ReachedAliases + hosts.Console + L.HostSeparator + hosts.Idp)
     }
 
     /** Reuses a placement recorded by a stopped run, or starts one and records it before it is scheduled. */
@@ -220,13 +240,6 @@ export class PlaceHostedLeg implements IJourneyLeg
         return answer[L.HivesField] ?? []
     }
 
-    private async RequestEnvironment(page: IJourneyPage, clientId: string, hiveId: string): Promise<string>
-    {
-        const L = PlaceHostedLeg
-        const answer = await page.PostJson(L.RequestEnvironmentOp, { [L.ClientIdField]: clientId, [L.HiveIdField]: hiveId, [L.EnvironmentField]: L.EnvironmentName, [L.PurposeField]: L.DevelopmentPurpose }) as { IntentId?: string }
-        return answer.IntentId ?? L.IntentIdField
-    }
-
     private async Leave(page: IJourneyPage, clientId: string, hiveId: string): Promise<void>
     {
         const L = PlaceHostedLeg
@@ -249,24 +262,6 @@ export class PlaceHostedLeg implements IJourneyLeg
         }, L.PlacedBudgetMs, L.SlowIntervalMs)
     }
 
-    private async WaitEnvironmentReady(page: IJourneyPage, clientId: string, hiveId: string): Promise<void>
-    {
-        const L = PlaceHostedLeg
-        await this.waiter.Until(L.ReadyCondition, async () =>
-        {
-            const hive = (await this.ListHives(page, clientId)).find(candidate => candidate.HiveId === hiveId)
-            const ready = hive?.Environments.some(environment => environment.Name === L.EnvironmentName && environment.Ready) ?? false
-            return ready ? WaitObservation.Met(true, L.EnvironmentName) : WaitObservation.NotYet<boolean>(L.NotYet)
-        }, L.ReadyBudgetMs, L.SlowIntervalMs)
-    }
-
-    private async LeaveAndWait(page: IJourneyPage, clientId: string, hiveId: string, placement: string): Promise<void>
-    {
-        await this.Leave(page, clientId, hiveId)
-        await this.WaitGone(page, clientId, hiveId)
-        await this.WaitClusterGone(placement)
-    }
-
     private async WaitGone(page: IJourneyPage, clientId: string, hiveId: string): Promise<void>
     {
         const L = PlaceHostedLeg
@@ -276,17 +271,6 @@ export class PlaceHostedLeg implements IJourneyLeg
             const gone = hive === undefined || hive.Health === L.GoneHealth
             return gone ? WaitObservation.Met(true, hiveId) : WaitObservation.NotYet<boolean>(L.NotYet)
         }, L.GoneBudgetMs, L.SlowIntervalMs)
-    }
-
-    private async WaitClusterBuilding(placement: string): Promise<void>
-    {
-        const L = PlaceHostedLeg
-        const controlPlane = L.ClusterPrefix + placement + L.ControlPlaneSuffix
-        await this.waiter.Until(L.BuildingCondition + L.ClusterPrefix + placement, async () =>
-        {
-            const names = await this.DockerNames()
-            return names.includes(controlPlane) ? WaitObservation.Met(true, controlPlane) : WaitObservation.NotYet<boolean>(L.NotYet)
-        }, L.BuildingBudgetMs, L.FastIntervalMs)
     }
 
     private async WaitClusterGone(placement: string): Promise<void>
@@ -299,16 +283,6 @@ export class PlaceHostedLeg implements IJourneyLeg
             const present = names.some(name => name.startsWith(prefix))
             return present ? WaitObservation.NotYet<boolean>(L.NotYet) : WaitObservation.Met(true, prefix)
         }, L.GoneBudgetMs, L.FastIntervalMs)
-    }
-
-    private async RestartHostAgent(): Promise<void>
-    {
-        const L = PlaceHostedLeg
-        const result = await this.runner.Run(L.Docker, L.RestartArgs, L.DockerTimeoutMs)
-        if (!result.Ok)
-        {
-            throw new Error(result.Stderr)
-        }
     }
 
     private async DockerNames(): Promise<string[]>

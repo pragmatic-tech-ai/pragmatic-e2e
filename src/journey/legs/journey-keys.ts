@@ -12,6 +12,8 @@ export class JourneyKeys
     public static readonly TenantState = 'tenantState'
     public static readonly Hive = 'hive'
     public static readonly HiveState = 'hiveState'
+    /** The Hosted placement id (the kind cluster is `pragmatic-hosted-<id>`). */
+    public static readonly HostedPlacement = 'hostedPlacementA'
     public static readonly ConsoleUrl = 'consoleUrl'
     public static readonly ConsoleHost = 'consoleHost'
     public static readonly IdpHost = 'idpHost'

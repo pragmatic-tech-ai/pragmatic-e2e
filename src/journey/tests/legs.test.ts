@@ -773,7 +773,7 @@ describe('JourneyLegs', () =>
         const inputs = new JourneyLegInputs(config, s.Browser, s.Identity, undefined, s.Uncleaned, s.Waiter, s.Evidence.Evidence)
         const N = JourneyLegName
         assert.deepEqual(JourneyLegs.For(JourneyPath.Enrolled, inputs).map(l => l.Name), [N.Visit, N.Register, N.Pay, N.Tenant, N.InstallAndEnrol, N.Domain, N.StaffSignIn, N.Plexus, N.DeployGraphs])
-        assert.deepEqual(JourneyLegs.For(JourneyPath.Hosted, inputs).map(l => l.Name), [N.Visit, N.Register, N.Pay, N.Tenant, N.PlaceHosted, N.Domain, N.StaffSignIn, N.Plexus, N.DeployGraphs])
+        assert.deepEqual(JourneyLegs.For(JourneyPath.Hosted, inputs).map(l => l.Name), [N.Visit, N.Register, N.Pay, N.Tenant, N.PlaceHosted, N.StaffSignIn, N.Plexus, N.DeployGraphs])
         const hosted = JourneyLegs.For(JourneyPath.Hosted, inputs)
         assert.ok(hosted.find(l => l.Name === N.Plexus)!.Dependencies.includes(JourneyDependency.HostedPlacement), 'the Hosted path later legs wait on the Hosted placement')
         const tenant = JourneyLegs.For(JourneyPath.Enrolled, inputs)[3]
@@ -786,7 +786,7 @@ describe('JourneyLegs', () =>
         const enrolledStaff = JourneyLegs.For(JourneyPath.Enrolled, inputs)[6]
         assert.ok(enrolledStaff instanceof StaffSignInLeg, 'the staff sign-in leg is built')
         assert.deepEqual(enrolledStaff.Dependencies, [D.EntitlementDelivery, D.CustomerCluster, D.TenantRealm])
-        const hostedStaff = JourneyLegs.For(JourneyPath.Hosted, inputs)[6]
+        const hostedStaff = JourneyLegs.For(JourneyPath.Hosted, inputs)[5]
         assert.ok(hostedStaff instanceof StaffSignInLeg, 'the staff sign-in leg is built on the Hosted path too')
         assert.deepEqual(hostedStaff.Dependencies, [D.EntitlementDelivery, D.HostedPlacement, D.TenantRealm])
         assert.deepEqual(tenant.Dependencies, [JourneyDependency.Cabinet, JourneyDependency.CentralLogin, JourneyDependency.EntitlementDelivery])

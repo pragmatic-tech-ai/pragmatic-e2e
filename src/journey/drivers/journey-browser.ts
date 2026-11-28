@@ -14,12 +14,12 @@ export interface IJourneyBrowser
      * keys `trustedSpki` names (the console's and the sign-in service's, whose chain to the engine's development CA the
      * leg verified, ConsoleTrust) and nothing else is opened in. The pins of the first call hold until Reset.
      */
-    ConsolePage(trustedSpki: readonly string[]): Promise<IJourneyPage>
+    ConsolePage(trustedSpki: readonly string[], resolverRules?: string): Promise<IJourneyPage>
     /**
      * A page in a fresh browser context of the console's browser (no cookies, no SSO session of the Owner's page), trusting
      * the same `trustedSpki`: a second person signing in to the same engine.
      */
-    FreshConsolePage(trustedSpki: readonly string[]): Promise<IJourneyPage>
+    FreshConsolePage(trustedSpki: readonly string[], resolverRules?: string): Promise<IJourneyPage>
     /**
      * While hidden, no failure screenshot is taken: the page may show a one-time code or an install command
      * (CabinetHivesPage hides it from pressing Start until it navigated away).
@@ -46,6 +46,9 @@ export class JourneyBrowser implements IJourneyBrowser, ILegSupervisor
     private static readonly ViewportHeight = 900
     private static readonly SpkiListFlag = '--ignore-certificate-errors-spki-list='
     private static readonly SpkiSeparator = ','
+    // Chromium's built-in resolver bypasses /etc/hosts, so the hosted hive's real console/idp hosts are mapped straight
+    // to the loopback port-forward here (any port -> the forward), which also catches a realm redirect to :443.
+    private static readonly ResolverRulesFlag = '--host-resolver-rules='
 
     private browser: Browser | undefined
     private context: BrowserContext | undefined
@@ -73,32 +76,37 @@ export class JourneyBrowser implements IJourneyBrowser, ILegSupervisor
         return this.page
     }
 
-    public async ConsolePage(trustedSpki: readonly string[]): Promise<IJourneyPage>
+    public async ConsolePage(trustedSpki: readonly string[], resolverRules?: string): Promise<IJourneyPage>
     {
         this.abort.Check()
         if (this.consolePage === undefined)
         {
-            const browser = await this.ConsoleBrowser(trustedSpki)
+            const browser = await this.ConsoleBrowser(trustedSpki, resolverRules)
             this.consolePage = new PlaywrightJourneyPage(await (await this.NewContext(browser)).newPage())
         }
         return this.consolePage
     }
 
-    public async FreshConsolePage(trustedSpki: readonly string[]): Promise<IJourneyPage>
+    public async FreshConsolePage(trustedSpki: readonly string[], resolverRules?: string): Promise<IJourneyPage>
     {
         this.abort.Check()
-        const browser = await this.ConsoleBrowser(trustedSpki)
+        const browser = await this.ConsoleBrowser(trustedSpki, resolverRules)
         return new PlaywrightJourneyPage(await (await this.NewContext(browser)).newPage())
     }
 
-    private async ConsoleBrowser(trustedSpki: readonly string[]): Promise<Browser>
+    private async ConsoleBrowser(trustedSpki: readonly string[], resolverRules?: string): Promise<Browser>
     {
         const J = JourneyBrowser
         if (this.consoleBrowser === undefined)
         {
             // Chromium accepts a certificate whose key is pinned here even though no public root issued it; certificate
             // errors stay errors for every other key (no ignoreHTTPSErrors).
-            this.consoleBrowser = await chromium.launch({ headless: !this.headed, channel: J.Channel, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false, args: [J.SpkiListFlag + trustedSpki.join(J.SpkiSeparator)] })
+            const args = [J.SpkiListFlag + trustedSpki.join(J.SpkiSeparator)]
+            if (resolverRules !== undefined && resolverRules.length > 0)
+            {
+                args.push(J.ResolverRulesFlag + resolverRules)
+            }
+            this.consoleBrowser = await chromium.launch({ headless: !this.headed, channel: J.Channel, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false, args })
         }
         return this.consoleBrowser
     }

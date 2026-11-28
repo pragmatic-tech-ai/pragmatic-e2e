@@ -15,8 +15,10 @@ import { JourneyPath } from '../journey-path.js'
 import { CentralAccount } from '../live/central-account.js'
 import { ConsoleTrust, type IConsoleTrust } from '../live/console-trust.js'
 import { CustomerCluster } from '../live/customer-cluster.js'
+import { FixedEngineClusterSource } from '../live/engine-secrets.js'
+import { HostedClusters, HostedEngineClusterSource } from '../live/hosted-cluster.js'
 import type { JourneyIdentity } from '../live/journey-identity.js'
-import { NodeProcessRunner, type IProcessRunner } from '../live/process-runner.js'
+import { NodeProcessRunner, type IProcessRunner, type IProcessStarter } from '../live/process-runner.js'
 import { LegAbort, type Waiter } from '../waiter.js'
 import { LazyJourneyDns } from '../live/journey-dns.js'
 import { DomainLeg } from './domain-leg.js'
@@ -43,7 +45,8 @@ export class JourneyLegInputs
         public readonly Evidence: Evidence,
         public readonly Abort: LegAbort = new LegAbort(),
         public readonly Runner: IProcessRunner = new NodeProcessRunner(),
-        public readonly Trust: IConsoleTrust = new ConsoleTrust())
+        public readonly Trust: IConsoleTrust = new ConsoleTrust(),
+        public readonly Starter: IProcessStarter = new NodeProcessRunner())
     {
     }
 }
@@ -64,18 +67,27 @@ export class JourneyLegs
         const cabinet = new CabinetPage(config.CabinetUrl, inputs.Waiter)
         const login = new CentralLoginPage(loginHost, inputs.Waiter)
         const session = new CustomerSession(inputs.Browser, cabinet, login, inputs.Identity, loginHost, inputs.Waiter)
+        const hostedClusters = new HostedClusters(inputs.Runner, inputs.Starter, undefined, inputs.Abort)
         const hive = path === JourneyPath.Hosted
-            ? new PlaceHostedLeg(session, inputs.Runner, inputs.Waiter, inputs.Evidence)
+            ? new PlaceHostedLeg(session, inputs.Runner, inputs.Waiter, inputs.Evidence, hostedClusters, inputs.Trust)
             : new InstallAndEnrolLeg(inputs.Browser, new CabinetHivesPage(session, cabinet, inputs.Browser, inputs.Waiter), new CustomerCluster(inputs.Runner, config.CustomerCluster, inputs.Abort), inputs.Trust, inputs.Waiter, inputs.Evidence)
+        const engine = path === JourneyPath.Hosted
+            ? new HostedEngineClusterSource(hostedClusters)
+            : new FixedEngineClusterSource(new CustomerCluster(inputs.Runner, config.CustomerCluster, inputs.Abort))
         const hiveDependency = path === JourneyPath.Hosted ? D.HostedPlacement : D.CustomerCluster
+        // The domain leg verifies a custom email domain; the Hosted (b) proof does not need it (the staff local
+        // account needs no verified domain), so it is left off the Hosted path until its cabinet selectors are proven.
+        const domain: IJourneyLeg[] = path === JourneyPath.Hosted
+            ? []
+            : [new DomainLeg(new CabinetDomainsPage(session, cabinet, inputs.Waiter), new LazyJourneyDns(config), inputs.Evidence)]
         return [
             new VisitLeg(inputs.Browser, new WebsitePage(config.WebsiteUrl, config.CabinetUrl), inputs.Evidence),
             new RegisterLeg(session, cabinet, login, new CentralAccount(config.CentralIssuer), inputs.Identity, inputs.CampaignCode, inputs.Uncleaned, inputs.Waiter, inputs.Evidence),
             new PayLeg(session, cabinet, new PaddleCheckout(inputs.Waiter), inputs.Identity, config.PlanName, inputs.Waiter, inputs.Evidence),
             new TenantLeg(new CabinetTenantsPage(session, cabinet, inputs.Waiter), inputs.Evidence),
             hive,
-            new DomainLeg(new CabinetDomainsPage(session, cabinet, inputs.Waiter), new LazyJourneyDns(config), inputs.Evidence),
-            new StaffSignInLeg(inputs.Browser, new CustomerCluster(inputs.Runner, config.CustomerCluster, inputs.Abort), inputs.Trust, inputs.Identity, inputs.Waiter, inputs.Evidence, hiveDependency),
+            ...domain,
+            new StaffSignInLeg(inputs.Browser, engine, inputs.Trust, inputs.Identity, inputs.Waiter, inputs.Evidence, hiveDependency),
             new PendingLeg(N.Plexus, [D.EntitlementDelivery, hiveDependency, D.PlexusRealmSignIn]),
             new PendingLeg(N.DeployGraphs, [D.EntitlementDelivery, hiveDependency, D.PlexusRealmSignIn]),
         ]

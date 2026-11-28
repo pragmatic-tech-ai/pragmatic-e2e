@@ -9,10 +9,12 @@ import { JourneyKeys, JourneyLegName, JourneyState } from '../legs/journey-keys.
 import { StaffSignInLeg } from '../legs/staff-sign-in-leg.js'
 import type { IConsoleTrust } from '../live/console-trust.js'
 import { CustomerCluster } from '../live/customer-cluster.js'
+import { FixedEngineClusterSource, type IEngineClusterSource } from '../live/engine-secrets.js'
+import { HostAliases, HostedClusters, HostedEngineClusterSource } from '../live/hosted-cluster.js'
 import { JourneyIdentity } from '../live/journey-identity.js'
 import { ProcessResult, type IProcessRunner } from '../live/process-runner.js'
 import { Waiter } from '../waiter.js'
-import { FakeBrowser, FakeClock, TestEvidence } from './journey-fakes.js'
+import { FakeBrowser, FakeClock, FakeStarter, TempFolder, TestEvidence } from './journey-fakes.js'
 
 /** A clock whose sleeping is the environment provisioning: it calls `OnSleep` once per sleep. */
 class ProvisioningClock extends FakeClock
@@ -57,8 +59,11 @@ class FakeKubectl implements IProcessRunner
 
 class FakeTrust implements IConsoleTrust
 {
-    public async Pins(hosts: readonly string[], _port: number, _caPem: string): Promise<string[]>
+    public readonly Ports: number[] = []
+
+    public async Pins(hosts: readonly string[], port: number, _caPem: string): Promise<string[]>
     {
+        this.Ports.push(port)
         return hosts.map(host => 'pin-' + host)
     }
 }
@@ -74,6 +79,8 @@ class StaffWorld
     public readonly Waiter = new Waiter(this.Clock, 1000)
     public readonly Identity = new JourneyIdentity(JourneyPath.Enrolled, 'pragmatic-lab.com', Seed)
     public readonly Cluster = new CustomerCluster(new FakeKubectl(), 'pragmatic-customer')
+    public readonly Trust = new FakeTrust()
+    public Source: IEngineClusterSource = new FixedEngineClusterSource(this.Cluster)
     public readonly Context: JourneyContext
     public readonly ExpectedPassword = this.Identity.StaffPassword(StaffEmail)
     /** Whether the realm offers local accounts (the dialog says so). */
@@ -109,7 +116,7 @@ class StaffWorld
     public Leg(): StaffSignInLeg
     {
         const dependency = this.Path === JourneyPath.Hosted ? JourneyDependency.HostedPlacement : JourneyDependency.CustomerCluster
-        return new StaffSignInLeg(this.Browser, this.Cluster, new FakeTrust(), this.Identity, this.Waiter, this.Evidence.Evidence, dependency)
+        return new StaffSignInLeg(this.Browser, this.Source, this.Trust, this.Identity, this.Waiter, this.Evidence.Evidence, dependency)
     }
 
     private WireOwner(): void

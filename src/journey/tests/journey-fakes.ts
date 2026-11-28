@@ -1,3 +1,4 @@
+import type { IProcessStarter, IRunningProcess } from '../live/process-runner.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -312,5 +313,31 @@ export class FakeBrowser implements IJourneyBrowser, ILegSupervisor
     public async Close(): Promise<void>
     {
         this.Closed++
+    }
+}
+
+export class FakeProcess implements IRunningProcess
+{
+    public Stopped = false
+
+    public constructor(public readonly Program: string, public readonly Argv: readonly string[], public readonly OnExit: (code: number) => void)
+    {
+    }
+
+    public async Stop(): Promise<void>
+    {
+        this.Stopped = true
+    }
+}
+
+export class FakeStarter implements IProcessStarter
+{
+    public readonly Started: FakeProcess[] = []
+
+    public Start(program: string, argv: readonly string[], onExit: (code: number) => void): IRunningProcess
+    {
+        const process = new FakeProcess(program, argv, onExit)
+        this.Started.push(process)
+        return process
     }
 }

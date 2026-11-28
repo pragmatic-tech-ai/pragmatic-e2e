@@ -6,8 +6,7 @@ import type { JourneyContext } from '../journey-context.js'
 import { JourneyDependency } from '../journey-dependency.js'
 import type { IJourneyLeg } from '../journey-leg.js'
 import type { IConsoleTrust } from '../live/console-trust.js'
-import { OwnerSignIn, type CustomerCluster } from '../live/customer-cluster.js'
-import { EngineInstallCommand } from '../live/engine-install-command.js'
+import { OwnerSignIn, type IEngineClusterSource } from '../live/engine-secrets.js'
 import type { JourneyIdentity } from '../live/journey-identity.js'
 import type { Waiter } from '../waiter.js'
 import { DomainLeg } from './domain-leg.js'
@@ -37,6 +36,11 @@ export class StaffSignInLeg implements IJourneyLeg
     public static readonly Environment = 'journey'
     private static readonly Staff = 'staff@'
     private static readonly PrincipalPrefix = 'staff-'
+    private static readonly MapPrefix = 'MAP '
+    private static readonly MapSeparator = ','
+    private static readonly Loopback = '127.0.0.1'
+    private static readonly PortColon = ':'
+    private static readonly HostTargetSpace = ' '
     private static readonly OwnerSignedIn = 'the Owner signed in to the engine console with the engine\'s initial sign-in'
     private static readonly EnvironmentCreated = 'created the environment (the Owner creates it; accounts and grants are scoped to one): '
     private static readonly EnvironmentResumed = 'resumed: the environment is already listed: '
@@ -57,7 +61,7 @@ export class StaffSignInLeg implements IJourneyLeg
 
     public constructor(
         private readonly browser: IJourneyBrowser,
-        private readonly cluster: CustomerCluster,
+        private readonly clusters: IEngineClusterSource,
         private readonly trust: IConsoleTrust,
         private readonly identity: JourneyIdentity,
         private readonly waiter: Waiter,
@@ -82,9 +86,10 @@ export class StaffSignInLeg implements IJourneyLeg
         context.Set(JourneyKeys.StaffEmail, email)
         const password = this.identity.StaffPassword(email)
         const pins = await this.Pins(context)
-        const owner = await this.browser.ConsolePage(pins)
+        const rules = this.ResolverRules(context)
+        const owner = await this.browser.ConsolePage(pins, rules)
         const engine = this.Engine(context)
-        await engine.SignIn(owner, () => this.cluster.Owner())
+        await engine.SignIn(owner, () => this.clusters.For(context).Owner())
         this.evidence.Step(this.Name, L.OwnerSignedIn)
         // Recorded before it is created, so a killed run's clean names it.
         context.Set(JourneyKeys.Environment, L.Environment)
@@ -113,7 +118,7 @@ export class StaffSignInLeg implements IJourneyLeg
             await this.tenantConsole.GrantRole(owner, TenantConsolePage.AdminRole)
             this.evidence.Step(this.Name, L.Granted)
         }
-        const staff = await this.browser.FreshConsolePage(pins)
+        const staff = await this.browser.FreshConsolePage(pins, rules)
         await engine.SignIn(staff, async () => new OwnerSignIn(email, password))
         context.Set(JourneyKeys.StaffState, JourneyState.StaffSignedIn)
         this.evidence.Step(this.Name, L.StaffSignedIn + email)
@@ -133,8 +138,15 @@ export class StaffSignInLeg implements IJourneyLeg
             this.evidence.Step(this.Name, L.AlreadyDisabled + email)
             return
         }
-        const owner = await this.browser.ConsolePage(await this.Pins(context))
-        await this.Engine(context).SignIn(owner, () => this.cluster.Owner())
+        // Run records the address before it creates anything; with no created state there is no account to disable, and
+        // the console may be unreachable (a torn-down hive), so clean does not reach it.
+        if (context.Get(JourneyKeys.StaffState) === undefined)
+        {
+            this.evidence.Step(this.Name, L.NotListed + email)
+            return
+        }
+        const owner = await this.browser.ConsolePage(await this.Pins(context), this.ResolverRules(context))
+        await this.Engine(context).SignIn(owner, () => this.clusters.For(context).Owner())
         await this.tenantConsole.OpenUsers(owner, context.Get(JourneyKeys.Environment) ?? L.Environment)
         if (!await this.tenantConsole.IsListed(owner, email))
         {
@@ -152,9 +164,23 @@ export class StaffSignInLeg implements IJourneyLeg
         return new EngineConsolePage(context.Require(JourneyKeys.ConsoleUrl), context.Require(JourneyKeys.ConsoleHost), this.waiter)
     }
 
-    /** The certificate keys the console's browser accepts: exactly the console's and the sign-in service's, chained to the engine's CA. */
+    /**
+     * Chromium host-resolver rules mapping the console and sign-in hosts (any port) to the loopback the console URL
+     * names: the hosted reach is a port-forward on 127.0.0.1, and Chromium's resolver ignores /etc/hosts; mapping every
+     * port also catches a realm redirect to :443.
+     */
+    private ResolverRules(context: JourneyContext): string
+    {
+        const L = StaffSignInLeg
+        const target = L.Loopback + L.PortColon + new URL(context.Require(JourneyKeys.ConsoleUrl)).port
+        return [context.Require(JourneyKeys.ConsoleHost), context.Require(JourneyKeys.IdpHost)]
+            .map(host => L.MapPrefix + host + L.HostTargetSpace + target)
+            .join(L.MapSeparator)
+    }
+
+    /** The certificate keys the console's browser (the console URL's port: the customer ingress's, or the hosted port-forward's) accepts: exactly the console's and the sign-in service's, chained to the engine's CA. */
     private async Pins(context: JourneyContext): Promise<string[]>
     {
-        return this.trust.Pins([context.Require(JourneyKeys.ConsoleHost), context.Require(JourneyKeys.IdpHost)], Number(EngineInstallCommand.ConsolePort), await this.cluster.DevCa())
+        return this.trust.Pins([context.Require(JourneyKeys.ConsoleHost), context.Require(JourneyKeys.IdpHost)], Number(new URL(context.Require(JourneyKeys.ConsoleUrl)).port), await this.clusters.For(context).DevCa())
     }
 }
