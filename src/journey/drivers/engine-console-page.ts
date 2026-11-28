@@ -14,6 +14,8 @@ export class EngineConsolePage
     public static readonly EmailSelector = 'input[placeholder="Email"]'
     public static readonly PasswordSelector = 'input[placeholder="Password"]'
     public static readonly SignInButton = 'Sign in'
+    /** The visible label beside the password box: the sign-in form repeats "Sign in" as its heading and its submit button, so the submit is the one in the password field's row. */
+    public static readonly PasswordLabel = 'Password'
     public static readonly OverviewConnection = 'View connection status'
     public static readonly CodeSelector = 'input[placeholder="pe1-..."]'
     public static readonly ConnectButton = 'Connect this hive'
@@ -78,7 +80,7 @@ export class EngineConsolePage
                 {
                     await page.Fill(E.EmailSelector, signIn.Email)
                     await page.Fill(E.PasswordSelector, signIn.Password)
-                    await page.ClickText(E.SignInButton)
+                    await page.ClickTextNear(E.SignInButton, E.PasswordLabel)
                     submitted = true
                 }
             }

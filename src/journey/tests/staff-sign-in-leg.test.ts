@@ -123,7 +123,7 @@ class StaffWorld
     {
         const T = TenantConsolePage
         const E = EngineConsolePage
-        this.Owner.OnGoto.set(ConsoleUrl, () => this.Owner.Show(ConsoleUrl, [E.SignInButton], [[E.EmailSelector, 1], [E.PasswordSelector, 1]]))
+        this.Owner.OnGoto.set(ConsoleUrl, () => this.Owner.Show(ConsoleUrl, [E.SignInButton, E.PasswordLabel], [[E.EmailSelector, 1], [E.PasswordSelector, 1]]))
         this.Owner.OnClick.set(E.SignInButton, () => this.Owner.Show(ConsoleUrl, [E.OverviewConnection, T.NavLabel, T.EnvironmentsNav]))
         this.Owner.OnClick.set(T.EnvironmentsNav, () => this.ShowEnvironments())
         this.Owner.OnClick.set(T.CreateEnvironmentLabel, () => this.CreateEnvironmentClicked())
@@ -148,7 +148,7 @@ class StaffWorld
     private WireStaff(): void
     {
         const E = EngineConsolePage
-        this.Staff.OnGoto.set(ConsoleUrl, () => this.Staff.Show(ConsoleUrl, [E.SignInButton], [[E.EmailSelector, 1], [E.PasswordSelector, 1]]))
+        this.Staff.OnGoto.set(ConsoleUrl, () => this.Staff.Show(ConsoleUrl, [E.SignInButton, E.PasswordLabel], [[E.EmailSelector, 1], [E.PasswordSelector, 1]]))
         this.Staff.OnClick.set(E.SignInButton, () =>
         {
             const filledEmail = this.Staff.Calls.includes('fill ' + E.EmailSelector + '#0 ' + StaffEmail)
@@ -277,6 +277,8 @@ describe('StaffSignInLeg', () =>
         assert.equal(w.Context.Get(JourneyKeys.StaffState), JourneyState.StaffSignedIn)
         // The Owner signed in with the engine's initial sign-in (no password change is asked for it).
         assert.ok(w.Owner.Calls.includes('fill ' + E.PasswordSelector + '#0 ' + OwnerPassword))
+        // Submit is the "Sign in" beside the password box, not the form's "Sign in" heading (the live idp-login shows both).
+        assert.ok(w.Owner.Calls.includes('click ' + E.SignInButton + ' near ' + E.PasswordLabel))
         // The account was created with the derived password, through the dialog's own boxes.
         assert.ok(w.Owner.Calls.includes('fill ' + T.EmailSelector + '#0 ' + StaffEmail))
         assert.ok(w.Owner.Calls.includes('fill ' + T.PasswordSelector + '#0 ' + w.ExpectedPassword))
@@ -395,6 +397,17 @@ describe('StaffSignInLeg', () =>
         w.Staff.OnClick.set(EngineConsolePage.SignInButton, () => undefined)
         await assert.rejects(() => w.Leg().Run(w.Context), /timed out/)
         assert.notEqual(w.Context.Get(JourneyKeys.StaffState), JourneyState.StaffSignedIn)
+        w.Evidence.Folder.Dispose()
+    })
+
+    it('records the console landing (url and body text) when the owner sign-in times out', async () =>
+    {
+        const w = new StaffWorld()
+        w.Owner.OnClick.set(EngineConsolePage.SignInButton, () => undefined)
+        await assert.rejects(() => w.Leg().Run(w.Context), /timed out/)
+        const lines = w.Evidence.Sink.Lines
+        assert.ok(lines.some(line => line.includes('landing url: ') && line.includes(ConsoleUrl)))
+        assert.ok(lines.some(line => line.includes('landing body text: ') && line.includes(EngineConsolePage.SignInButton)))
         w.Evidence.Folder.Dispose()
     })
 

@@ -42,6 +42,8 @@ export interface IJourneyPage
     Hrefs(): Promise<string[]>
     Frame(host: string): IJourneyFrame | undefined
     ScreenshotPage(): IScreenshotPage
+    /** The page's full visible body text, for a diagnostic dump. */
+    BodyText(): Promise<string>
     /**
      * POSTs a JSON body to a same-origin `path` from inside the page, so the request carries the page's own session
      * (the customer's cabinet cookies); returns the parsed JSON answer (an empty body is null). Throws with the status
@@ -101,6 +103,7 @@ export class PlaywrightJourneyFrame implements IJourneyFrame
 export class PlaywrightJourneyPage implements IJourneyPage
 {
     private static readonly AnchorSelector = 'a[href]'
+    private static readonly Body = 'body'
     private static readonly HrefAttribute = 'href'
     private static readonly NoText = 'no visible text on the page: '
     private static readonly NoValue = ''
@@ -284,6 +287,11 @@ export class PlaywrightJourneyPage implements IJourneyPage
             }
         })
         return frame === undefined ? undefined : new PlaywrightJourneyFrame(frame)
+    }
+
+    public async BodyText(): Promise<string>
+    {
+        return this.page.locator(PlaywrightJourneyPage.Body).innerText()
     }
 
     public ScreenshotPage(): IScreenshotPage

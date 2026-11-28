@@ -203,7 +203,7 @@ class LegWorld
         {
             if (!this.SignedIn)
             {
-                c.Show('https://idp-' + Tenant + '.localtest.me:28443/login', [E.SignInButton], [[E.EmailSelector, 1], [E.PasswordSelector, 1]])
+                c.Show('https://idp-' + Tenant + '.localtest.me:28443/login', [E.SignInButton, E.PasswordLabel], [[E.EmailSelector, 1], [E.PasswordSelector, 1]])
                 return
             }
             const pending = this.Requests > 0 && !this.Delegated && !this.Approved

@@ -120,6 +120,8 @@ export class FakeFrame implements IJourneyFrame
  */
 export class FakePage implements IJourneyPage
 {
+    private static readonly LineSeparator = '\n'
+
     public CurrentUrl = 'about:blank'
     public readonly Texts = new Set<string>()
     public readonly Selectors = new Map<string, number>()
@@ -213,6 +215,11 @@ export class FakePage implements IJourneyPage
     public Frame(host: string): IJourneyFrame | undefined
     {
         return this.Frames.get(host)
+    }
+
+    public async BodyText(): Promise<string>
+    {
+        return [...this.Texts].join(FakePage.LineSeparator)
     }
 
     public ScreenshotPage(): IScreenshotPage
